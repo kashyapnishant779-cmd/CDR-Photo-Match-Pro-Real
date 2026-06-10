@@ -20,7 +20,7 @@ jobs:
         uses: NuGet/setup-nuget@v2
 
       - name: Restore packages
-        run: nuget restore CDRPhotoMatchPro.csproj -PackagesDirectory packages
+        run: nuget restore packages.config -PackagesDirectory packages
 
       - name: List packages
         run: dir packages
