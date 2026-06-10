@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS cdr_files(id INTEGER PRIMARY KEY AUTOINCREMENT,path TEXT UNIQUE NOT NULL,file_name TEXT NOT NULL,folder_path TEXT NOT NULL,last_write_utc TEXT NOT NULL,size_bytes INTEGER NOT NULL,sha1 TEXT NOT NULL,indexed_utc TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS designs(id INTEGER PRIMARY KEY AUTOINCREMENT,cdr_file_id INTEGER NOT NULL,page_number INTEGER NOT NULL,object_number INTEGER NOT NULL,thumbnail_path TEXT NOT NULL,descriptor BLOB NOT NULL,width INTEGER NOT NULL,height INTEGER NOT NULL,FOREIGN KEY(cdr_file_id) REFERENCES cdr_files(id));
+CREATE INDEX IF NOT EXISTS ix_design_file ON designs(cdr_file_id);
+CREATE INDEX IF NOT EXISTS ix_cdr_path ON cdr_files(path);
