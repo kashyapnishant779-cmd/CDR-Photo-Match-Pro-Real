@@ -17,7 +17,7 @@ jobs:
         uses: microsoft/setup-msbuild@v2
 
       - name: Restore NuGet packages
-        run: nuget restore CDRPhotoMatchPro.csproj
+        run: nuget restore CDRPhotoMatchPro.csproj -PackagesDirectory packages
 
       - name: Build Release
         run: msbuild CDRPhotoMatchPro.csproj /p:Configuration=Release /p:Platform="Any CPU"
