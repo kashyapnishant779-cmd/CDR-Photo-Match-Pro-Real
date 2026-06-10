@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="12.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+ 
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
@@ -37,4 +37,5 @@
     <Compile Include="Program.cs" /><Compile Include="UI\MainForm.cs" /><Compile Include="Data\Database.cs" /><Compile Include="Core\Models.cs" /><Compile Include="Core\FileScanner.cs" /><Compile Include="Core\CorelDrawService.cs" /><Compile Include="Core\Indexer.cs" /><Compile Include="Imaging\ImageMatcher.cs" /><Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup><None Include="App.config" /><None Include="packages.config" /><None Include="README.md" /><None Include="SQLiteSchema.sql" /></ItemGroup>
+<Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
