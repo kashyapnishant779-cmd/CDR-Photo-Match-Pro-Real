@@ -20,7 +20,7 @@ jobs:
         uses: NuGet/setup-nuget@v2
 
       - name: Restore packages
-        run: nuget install packages.config -OutputDirectory packages
+        run: nuget restore CDRPhotoMatchPro.csproj
 
       - name: Build Release
         run: msbuild CDRPhotoMatchPro.csproj /p:Configuration=Debug /p:Platform="AnyCPU"
