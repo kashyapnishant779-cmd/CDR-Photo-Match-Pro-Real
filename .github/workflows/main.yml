@@ -23,7 +23,7 @@ jobs:
         run: nuget restore packages.config -PackagesDirectory packages
 
       - name: Build Release
-        run: msbuild CDRPhotoMatchPro.csproj /p:Configuration=Release /p:Platform="Any CPU"
+        run: msbuild CDRPhotoMatchPro.csproj /p:Configuration=Debug /p:Platform="AnyCPU"
 
       - name: Upload build output
         uses: actions/upload-artifact@v4
