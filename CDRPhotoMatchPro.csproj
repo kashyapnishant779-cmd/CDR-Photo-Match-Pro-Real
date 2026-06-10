@@ -20,9 +20,18 @@
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="System" /><Reference Include="System.Core" /><Reference Include="System.Drawing" /><Reference Include="System.Windows.Forms" /><Reference Include="System.Data" /><Reference Include="Microsoft.CSharp" />
-    <Reference Include="System.Data.SQLite"><HintPath>..\packages\System.Data.SQLite.Core.1.0.118.0\lib\net45\System.Data.SQLite.dll</HintPath><Private>True</Private></Reference>
-    <Reference Include="OpenCvSharp"><HintPath>..\packages\OpenCvSharp4.4.10.0.20240616\lib\netstandard2.0\OpenCvSharp.dll</HintPath><Private>True</Private></Reference>
-    <Reference Include="netstandard" />
+ <Reference Include="System.Data.SQLite">
+  <HintPath>packages\System.Data.SQLite.Core.1.0.118.0\lib\net45\System.Data.SQLite.dll</HintPath>
+  <Private>True</Private>
+</Reference>
+
+<Reference Include="OpenCvSharp">
+  <HintPath>packages\OpenCvSharp4.4.10.0.20240616\lib\net461\OpenCvSharp.dll</HintPath>
+  <Private>True</Private>
+</Reference>
+
+<Reference Include="netstandard" />
+   
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Program.cs" /><Compile Include="UI\MainForm.cs" /><Compile Include="Data\Database.cs" /><Compile Include="Core\Models.cs" /><Compile Include="Core\FileScanner.cs" /><Compile Include="Core\CorelDrawService.cs" /><Compile Include="Core\Indexer.cs" /><Compile Include="Imaging\ImageMatcher.cs" /><Compile Include="Properties\AssemblyInfo.cs" />
