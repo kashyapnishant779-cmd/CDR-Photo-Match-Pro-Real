@@ -11,9 +11,12 @@ namespace CDRPhotoMatchPro.Core
 
         public CorelDrawService()
         {
-            var type = Type.GetTypeFromProgID("CorelDRAW.Application");
+            var type =
+                Type.GetTypeFromProgID("CorelDRAW.Application.14") ??
+                Type.GetTypeFromProgID("CorelDRAW.Application");
+
             if (type == null)
-                throw new InvalidOperationException("CorelDRAW COM not found. Install CorelDRAW X4 or newer.");
+                throw new InvalidOperationException("CorelDRAW COM not found.");
 
             _app = Activator.CreateInstance(type);
             _app.Visible = false;
