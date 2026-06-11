@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="12.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
- 
+
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
@@ -12,30 +12,61 @@
     <FileAlignment>512</FileAlignment>
     <UseVSHostingProcess>false</UseVSHostingProcess>
   </PropertyGroup>
+
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-    <PlatformTarget>x64</PlatformTarget><DebugSymbols>true</DebugSymbols><DebugType>full</DebugType><Optimize>false</Optimize><OutputPath>bin\Debug\</OutputPath><DefineConstants>DEBUG;TRACE</DefineConstants><WarningLevel>4</WarningLevel>
+    <PlatformTarget>x64</PlatformTarget>
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <WarningLevel>4</WarningLevel>
   </PropertyGroup>
+
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <PlatformTarget>x64</PlatformTarget><DebugType>pdbonly</DebugType><Optimize>true</Optimize><OutputPath>bin\Release\</OutputPath><DefineConstants>TRACE</DefineConstants><WarningLevel>4</WarningLevel>
+    <PlatformTarget>x64</PlatformTarget>
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <WarningLevel>4</WarningLevel>
   </PropertyGroup>
-  <ItemGroup>
-    <Reference Include="System" /><Reference Include="System.Core" /><Reference Include="System.Drawing" /><Reference Include="System.Windows.Forms" /><Reference Include="System.Data" /><Reference Include="Microsoft.CSharp" />
- <Reference Include="System.Data.SQLite">
-  <HintPath>packages\System.Data.SQLite.Core.1.0.118.0\lib\net46\System.Data.SQLite.dll</HintPath>
-  <Private>True</Private>
-</Reference>
 
-<Reference Include="OpenCvSharp">
-  <HintPath>packages\OpenCvSharp4.4.10.0.20240616\lib\netstandard2.0\OpenCvSharp.dll</HintPath>
-  <Private>True</Private>
-</Reference>
-
-<Reference Include="netstandard" />
-   
-  </ItemGroup>
   <ItemGroup>
-    <Compile Include="Program.cs" /><Compile Include="UI\MainForm.cs" /><Compile Include="Data\Database.cs" /><Compile Include="Core\Models.cs" /><Compile Include="Core\FileScanner.cs" /><Compile Include="Core\CorelDrawService.cs" /><Compile Include="Core\Indexer.cs" /><Compile Include="Imaging\ImageMatcher.cs" /><Compile Include="Properties\AssemblyInfo.cs" />
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Data" />
+    <Reference Include="Microsoft.CSharp" />
+
+    <Reference Include="OpenCvSharp">
+      <HintPath>packages\OpenCvSharp4.4.10.0.20240616\lib\netstandard2.0\OpenCvSharp.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+
+    <Reference Include="netstandard" />
   </ItemGroup>
-  <ItemGroup><None Include="App.config" /><None Include="packages.config" /><None Include="README.md" /><None Include="SQLiteSchema.sql" /></ItemGroup>
-<Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="UI\MainForm.cs" />
+    <Compile Include="Data\Database.cs" />
+    <Compile Include="Core\Models.cs" />
+    <Compile Include="Core\FileScanner.cs" />
+    <Compile Include="Core\CorelDrawService.cs" />
+    <Compile Include="Core\Indexer.cs" />
+    <Compile Include="Imaging\ImageMatcher.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="App.config" />
+    <None Include="packages.config" />
+    <None Include="README.md" />
+    <None Include="SQLiteSchema.sql" />
+  </ItemGroup>
+
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+
 </Project>
