@@ -26,6 +26,7 @@ jobs:
         run: dir packages
 
       - name: List SQLite files
+        shell: cmd
         run: dir packages\System.Data.SQLite.Core.1.0.118.0 /s
 
       - name: Build Release
