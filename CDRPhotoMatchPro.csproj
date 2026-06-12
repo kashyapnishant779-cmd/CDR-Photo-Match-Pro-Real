@@ -47,7 +47,7 @@
 
     <Reference Include="netstandard">
   <HintPath>C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.8\Facades\netstandard.dll</HintPath>
-  <Private>True</Private>
+  <Private>False</Private>
 </Reference>
   </ItemGroup>
 
