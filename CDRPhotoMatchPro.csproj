@@ -44,7 +44,10 @@
       <HintPath>packages\OpenCvSharp4.4.5.5.20211231\lib\netstandard2.0\OpenCvSharp.dll</HintPath>
       <Private>True</Private>
     </Reference>
-
+    <Reference Include="System.Data.SQLite">
+       <HintPath>packages\System.Data.SQLite.Core.1.0.118.0\lib\net46\System.Data.SQLite.dll</HintPath>
+       <Private>True</Private>
+   </Reference>
     
   </ItemGroup>
 
