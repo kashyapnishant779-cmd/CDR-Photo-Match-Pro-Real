@@ -23,7 +23,7 @@ jobs:
       - name: Restore packages
         run: nuget restore CDRPhotoMatchPro.csproj -PackagesDirectory packages
       - name: Force install SQLite
-        run: nuget install System.Data.SQLite -Version 1.0.118.0 -OutputDirectory packages
+        run: nuget install System.Data.SQLite.Core -Version 1.0.118.0 -OutputDirectory packages
       - name: Build Debug
         run: msbuild CDRPhotoMatchPro.csproj /p:Configuration=Debug /p:Platform="AnyCPU"
 
