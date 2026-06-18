@@ -25,14 +25,14 @@ jobs:
       - name: Build Release
         run: msbuild CDRPhotoMatchPro.csproj /p:Configuration=Debug /p:Platform="AnyCPU"
 
+      
       - name: Copy required DLLs
         shell: cmd
         run: |
           if not exist bin\Debug mkdir bin\Debug
-          copy packages\OpenCvSharp4.4.5.5.20211231\lib\netstandard2.0\OpenCvSharp.dll bin\Debug\
-          copy packages\OpenCvSharp4.runtime.win.4.5.5.20211231\runtimes\win-x64\native\OpenCvSharpExtern.dll bin\Debug\
-          copy packages\System.Data.SQLite.Core.1.0.118.0\lib\net46\System.Data.SQLite.dll bin\Debug\
-          copy packages\System.Data.SQLite.Core.1.0.118.0\build\net46\x64\SQLite.Interop.dll bin\Debug\
+
+       dir packages /s
+       copy packages\OpenCvSharp4.4.5.5.20211231\lib\netstandard2.0\OpenCvSharp.dll bin\Debug\
 
       - name: Show output files
         shell: cmd
