@@ -27,8 +27,9 @@ namespace CDRPhotoMatchPro.Imaging
         public double Compare(byte[] queryDescriptor, byte[] indexedDescriptor)
         {
             if (queryDescriptor == null || indexedDescriptor == null || queryDescriptor.Length == 0 || indexedDescriptor.Length == 0) return 0;
-            using (var q = Mat.FromPixelData(queryDescriptor.Length / 32, 32, MatType.CV_8UC1, queryDescriptor))
-            using (var t = Mat.FromPixelData(indexedDescriptor.Length / 32, 32, MatType.CV_8UC1, indexedDescriptor))
+            using (var q = new Mat(queryDescriptor.Length / 32, 32, MatType.CV_8UC1, queryDescriptor))
+            using (var t = new Mat(indexedDescriptor.Length / 32, 32, MatType.CV_8UC1, indexedDescriptor))
+
             using (var matcher = new BFMatcher(NormTypes.Hamming, false))
             {
                 var matches = matcher.KnnMatch(q, t, 2);
