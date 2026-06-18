@@ -45,9 +45,10 @@
       <Private>True</Private>
     </Reference>
     <Reference Include="System.Data.SQLite">
-       <HintPath>packages\System.Data.SQLite.Core.1.0.118.0\lib\net46\System.Data.SQLite.dll</HintPath>
-       <Private>True</Private>
-   </Reference>
+      <HintPath>packages\System.Data.SQLite.1.0.118.0\lib\net46\System.Data.SQLite.dll</HintPath>
+      <Private>True</Private>
+     </Reference>
+
     
   </ItemGroup>
 
