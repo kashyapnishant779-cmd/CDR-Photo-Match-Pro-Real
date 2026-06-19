@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.Drawing.Imaging;
 using System.IO;
-using System.Threading;
 using System.Windows.Forms;
 
 namespace CDRPhotoMatchPro.Core
@@ -29,18 +27,13 @@ namespace CDRPhotoMatchPro.Core
             var results = new List<DesignRecord>();
             Directory.CreateDirectory(cacheRoot);
 
-            MessageBox.Show("Export start:\n" + cdrPath);
-
             dynamic doc = null;
 
             try
             {
                 doc = _app.OpenDocument(cdrPath, 0);
-                MessageBox.Show("Document opened");
 
                 int pageCount = Convert.ToInt32(doc.Pages.Count);
-                MessageBox.Show("Page count: " + pageCount);
-
                 string fileName = Path.GetFileName(cdrPath);
                 string folderPath = Path.GetDirectoryName(cdrPath);
 
@@ -49,105 +42,45 @@ namespace CDRPhotoMatchPro.Core
                     dynamic page = doc.Pages[p];
                     page.Activate();
 
-                    int shapeCount = Convert.ToInt32(page.Shapes.Count);
-                    MessageBox.Show("Page " + p + " shapes: " + shapeCount);
+                    string outFile = Path.Combine(
+                        cacheRoot,
+                        Path.GetFileNameWithoutExtension(cdrPath) + "_p" + p + ".jpg"
+                    );
 
-                    for (int s = 1; s <= shapeCount; s++)
+                    try
                     {
-                        dynamic shape = page.Shapes[s];
+                        doc.ExportBitmap(outFile, 5, 1, 0, 1200, 1200).Finish();
 
-                        string outFile = Path.Combine(
-                            cacheRoot,
-                            Path.GetFileNameWithoutExtension(cdrPath) + "_p" + p + "_s" + s + ".jpg"
-                        );
-
-                        try
+                        if (File.Exists(outFile))
                         {
-                            bool ok = CopyShapeToJpg(shape, outFile);
-
-                            if (ok && File.Exists(outFile))
+                            results.Add(new DesignRecord
                             {
-                                MessageBox.Show("Export OK:\n" + outFile);
-
-                                results.Add(new DesignRecord
-                                {
-                                    CdrPath = cdrPath,
-                                    FileName = fileName,
-                                    FolderPath = folderPath,
-                                    PageNumber = p,
-                                    ObjectNumber = s,
-                                    ThumbnailPath = outFile,
-                                    PngPath = outFile
-                                });
-                            }
-                            else
-                            {
-                                MessageBox.Show("Export file missing:\n" + outFile);
-                            }
+                                CdrPath = cdrPath,
+                                FileName = fileName,
+                                FolderPath = folderPath,
+                                PageNumber = p,
+                                ObjectNumber = 0,
+                                ThumbnailPath = outFile,
+                                PngPath = outFile
+                            });
                         }
-                        catch (Exception ex)
-                        {
-                            MessageBox.Show("Shape export error:\n" + ex.ToString());
-                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show("Page export error:\n" + ex.Message);
                     }
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show("CDR open/export error:\n" + ex.ToString());
+                MessageBox.Show("CDR open/export error:\n" + ex.Message);
             }
             finally
             {
-                try
-                {
-                    if (doc != null) doc.Close();
-                }
-                catch { }
+                try { if (doc != null) doc.Close(); } catch { }
             }
 
-            MessageBox.Show("Export results count: " + results.Count);
             return results;
-        }
-
-        private bool CopyShapeToJpg(dynamic shape, string outFile)
-        {
-            bool result = false;
-            Exception threadError = null;
-
-            Thread t = new Thread(() =>
-            {
-                try
-                {
-                    Clipboard.Clear();
-
-                    shape.CreateSelection();
-                    _app.ActiveSelection.Copy();
-
-                    Thread.Sleep(300);
-
-                    var img = Clipboard.GetImage();
-                    if (img == null)
-                        throw new InvalidOperationException("Clipboard image is null.");
-
-                    img.Save(outFile, ImageFormat.Jpeg);
-                    img.Dispose();
-
-                    result = File.Exists(outFile);
-                }
-                catch (Exception ex)
-                {
-                    threadError = ex;
-                }
-            });
-
-            t.SetApartmentState(ApartmentState.STA);
-            t.Start();
-            t.Join();
-
-            if (threadError != null)
-                throw threadError;
-
-            return result;
         }
 
         public void Dispose()
