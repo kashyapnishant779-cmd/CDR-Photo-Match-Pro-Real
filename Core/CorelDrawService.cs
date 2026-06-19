@@ -63,9 +63,8 @@ namespace CDRPhotoMatchPro.Core
                         {
                             shape.CreateSelection();
 
-                            // CorelDRAW X4 compatible export attempt
-                            dynamic filter = doc.ExportEx(outFile, 774, 1);
-                            filter.Finish();
+                            // CorelDRAW X4 simple Export method
+                            doc.Export(outFile, 774, 1);
 
                             if (File.Exists(outFile))
                             {
