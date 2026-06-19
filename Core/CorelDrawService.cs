@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing.Imaging;
 using System.IO;
+using System.Threading;
 using System.Windows.Forms;
 
 namespace CDRPhotoMatchPro.Core
@@ -19,7 +21,7 @@ namespace CDRPhotoMatchPro.Core
                 throw new InvalidOperationException("CorelDRAW COM not found.");
 
             _app = Activator.CreateInstance(type);
-            _app.Visible = false;
+            _app.Visible = true;
         }
 
         public IEnumerable<DesignRecord> ExportDesigns(string cdrPath, string cacheRoot)
@@ -61,20 +63,9 @@ namespace CDRPhotoMatchPro.Core
 
                         try
                         {
-                            shape.CreateSelection();
+                            bool ok = CopyShapeToJpg(shape, outFile);
 
-                           dynamic export = doc.ExportBitmap(
-                               outFile,
-                               5,
-                               1,
-                               0,
-                               300,
-                               300
-                           );
-
-                           export.Finish();
-
-                           if (File.Exists(outFile))
+                            if (ok && File.Exists(outFile))
                             {
                                 MessageBox.Show("Export OK:\n" + outFile);
 
@@ -116,6 +107,47 @@ namespace CDRPhotoMatchPro.Core
 
             MessageBox.Show("Export results count: " + results.Count);
             return results;
+        }
+
+        private bool CopyShapeToJpg(dynamic shape, string outFile)
+        {
+            bool result = false;
+            Exception threadError = null;
+
+            Thread t = new Thread(() =>
+            {
+                try
+                {
+                    Clipboard.Clear();
+
+                    shape.CreateSelection();
+                    _app.ActiveSelection.Copy();
+
+                    Thread.Sleep(300);
+
+                    var img = Clipboard.GetImage();
+                    if (img == null)
+                        throw new InvalidOperationException("Clipboard image is null.");
+
+                    img.Save(outFile, ImageFormat.Jpeg);
+                    img.Dispose();
+
+                    result = File.Exists(outFile);
+                }
+                catch (Exception ex)
+                {
+                    threadError = ex;
+                }
+            });
+
+            t.SetApartmentState(ApartmentState.STA);
+            t.Start();
+            t.Join();
+
+            if (threadError != null)
+                throw threadError;
+
+            return result;
         }
 
         public void Dispose()
