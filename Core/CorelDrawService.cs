@@ -22,9 +22,9 @@ namespace CDRPhotoMatchPro.Core
             _app.Visible = false;
         }
 
-        public IEnumerable<ExportedDesign> ExportDesigns(string cdrPath, string cacheRoot)
+        public IEnumerable<DesignRecord> ExportDesigns(string cdrPath, string cacheRoot)
         {
-            var results = new List<ExportedDesign>();
+            var results = new List<DesignRecord>();
             Directory.CreateDirectory(cacheRoot);
 
             MessageBox.Show("Export start:\n" + cdrPath);
@@ -38,6 +38,9 @@ namespace CDRPhotoMatchPro.Core
 
                 int pageCount = Convert.ToInt32(doc.Pages.Count);
                 MessageBox.Show("Page count: " + pageCount);
+
+                string fileName = Path.GetFileName(cdrPath);
+                string folderPath = Path.GetDirectoryName(cdrPath);
 
                 for (int p = 1; p <= pageCount; p++)
                 {
@@ -59,18 +62,21 @@ namespace CDRPhotoMatchPro.Core
                         try
                         {
                             shape.CreateSelection();
+
                             doc.ExportBitmap(outFile, 2, 1, 0, 800, 800).Finish();
 
                             if (File.Exists(outFile))
                             {
                                 MessageBox.Show("Export OK:\n" + outFile);
 
-                                results.Add(new ExportedDesign
+                                results.Add(new DesignRecord
                                 {
                                     CdrPath = cdrPath,
-                                    PreviewPath = outFile,
+                                    FileName = fileName,
+                                    FolderPath = folderPath,
                                     PageNumber = p,
-                                    ShapeNumber = s
+                                    ObjectNumber = s,
+                                    ThumbnailPath = outFile
                                 });
                             }
                             else
