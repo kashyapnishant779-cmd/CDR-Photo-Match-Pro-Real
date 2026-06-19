@@ -27,9 +27,9 @@ jobs:
       - name: Build Debug
         run: msbuild CDRPhotoMatchPro.csproj /p:Configuration=Debug /p:Platform="AnyCPU"
       - name: Find netstandard DLL
-        run: dir C:\ /s /b netstandard.dll
-          
+        run: Get-ChildItem -Path C:\ -Filter netstandard.dll -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
 
+               
       - name: Upload build output
         uses: actions/upload-artifact@v4
         with:
