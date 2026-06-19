@@ -1,194 +1,79 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Runtime.InteropServices;
-
-namespace CDRPhotoMatchPro.Core
+public IEnumerable<ExportedDesign> ExportDesigns(string cdrPath, string cacheRoot)
 {
-    public sealed class CorelDrawService : IDisposable
+    var results = new List<ExportedDesign>();
+    Directory.CreateDirectory(cacheRoot);
+
+    MessageBox.Show("Export start:\n" + cdrPath);
+
+    dynamic doc = null;
+
+    try
     {
-        private dynamic _app;
+        doc = _app.OpenDocument(cdrPath, 0);
+        MessageBox.Show("Document opened");
 
-        public CorelDrawService()
+        int pageCount = Convert.ToInt32(doc.Pages.Count);
+        MessageBox.Show("Page count: " + pageCount);
+
+        for (int p = 1; p <= pageCount; p++)
         {
-            var type =
-                Type.GetTypeFromProgID("CorelDRAW.Application.14") ??
-                Type.GetTypeFromProgID("CorelDRAW.Application");
+            dynamic page = doc.Pages[p];
+            page.Activate();
 
-            if (type == null)
-                throw new InvalidOperationException("CorelDRAW COM not found.");
+            int shapeCount = Convert.ToInt32(page.Shapes.Count);
+            MessageBox.Show("Page " + p + " shapes: " + shapeCount);
 
-            _app = Activator.CreateInstance(type);
-            _app.Visible = true;
-        }
-
-        public IEnumerable<ExportedDesign> ExportDesigns(string cdrPath, string cacheRoot)
-        {
-            var results = new List<ExportedDesign>();
-            Directory.CreateDirectory(cacheRoot);
-
-            dynamic doc = null;
-
-            try
+            for (int s = 1; s <= shapeCount; s++)
             {
-                doc = _app.OpenDocument(cdrPath);
-                int pageCount = Convert.ToInt32(doc.Pages.Count);
+                dynamic shape = page.Shapes[s];
 
-                for (int p = 1; p <= pageCount; p++)
-                {
-                    dynamic page = doc.Pages[p];
-                    page.Activate();
-
-                    int shapeCount = 0;
-                    try { shapeCount = Convert.ToInt32(page.Shapes.Count); } catch { shapeCount = 0; }
-
-                    if (shapeCount <= 0)
-                    {
-                        string pageFile = Path.Combine(cacheRoot, Safe(Path.GetFileNameWithoutExtension(cdrPath)) + "_p" + p + "_page.png");
-                        if (ExportCurrentPage(pageFile))
-                        {
-                            results.Add(new ExportedDesign { PageNumber = p, ObjectNumber = 0, PngPath = pageFile });
-                        }
-                        continue;
-                    }
-
-                    for (int i = 1; i <= shapeCount; i++)
-                    {
-                        string outFile = Path.Combine(cacheRoot, Safe(Path.GetFileNameWithoutExtension(cdrPath)) + "_p" + p + "_o" + i + ".png");
-
-                        try
-                        {
-                            dynamic shape = page.Shapes[i];
-                            if (ExportOneShape(shape, outFile))
-                            {
-                                results.Add(new ExportedDesign
-                                {
-                                    PageNumber = p,
-                                    ObjectNumber = i,
-                                    PngPath = outFile
-                                });
-                            }
-                        }
-                        catch
-                        {
-                        }
-                    }
-
-                    if (results.Count == 0)
-                    {
-                        string pageFile = Path.Combine(cacheRoot, Safe(Path.GetFileNameWithoutExtension(cdrPath)) + "_p" + p + "_page.png");
-                        if (ExportCurrentPage(pageFile))
-                        {
-                            results.Add(new ExportedDesign { PageNumber = p, ObjectNumber = 0, PngPath = pageFile });
-                        }
-                    }
-                }
-            }
-            finally
-            {
-                if (doc != null)
-                {
-                    try { doc.Close(); } catch { }
-                    try { Marshal.ReleaseComObject(doc); } catch { }
-                }
-            }
-
-            return results;
-        }
-
-        private bool ExportOneShape(dynamic shape, string outFile)
-        {
-            try
-            {
-                if (File.Exists(outFile)) File.Delete(outFile);
-
-                shape.CreateSelection();
-
-                dynamic sel = _app.ActiveSelection;
-                if (sel == null) return false;
+                string outFile = Path.Combine(
+                    cacheRoot,
+                    Path.GetFileNameWithoutExtension(cdrPath) + "_p" + p + "_s" + s + ".png"
+                );
 
                 try
                 {
-                    sel.ExportBitmap(outFile, 5, 0, 0, 800, 800).Finish();
+                    shape.CreateSelection();
+                    doc.ExportBitmap(outFile, 2, 1, 0, 800, 800).Finish();
+
+                    if (File.Exists(outFile))
+                    {
+                        MessageBox.Show("Export OK:\n" + outFile);
+
+                        results.Add(new ExportedDesign
+                        {
+                            CdrPath = cdrPath,
+                            PreviewPath = outFile,
+                            PageNumber = p,
+                            ShapeNumber = s
+                        });
+                    }
+                    else
+                    {
+                        MessageBox.Show("Export file missing:\n" + outFile);
+                    }
                 }
-                catch
+                catch (Exception ex)
                 {
-                    try
-                    {
-                        sel.Export(outFile, 774, 0);
-                    }
-                    catch
-                    {
-                        return false;
-                    }
+                    MessageBox.Show("Shape export error:\n" + ex.Message);
                 }
-
-                return File.Exists(outFile) && new FileInfo(outFile).Length > 0;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        private bool ExportCurrentPage(string outFile)
-        {
-            try
-            {
-                if (File.Exists(outFile)) File.Delete(outFile);
-
-                try
-                {
-                    _app.ActiveDocument.ExportBitmap(outFile, 5, 0, 0, 1200, 1200).Finish();
-                }
-                catch
-                {
-                    try
-                    {
-                        _app.ActiveDocument.Export(outFile, 774, 0);
-                    }
-                    catch
-                    {
-                        return false;
-                    }
-                }
-
-                return File.Exists(outFile) && new FileInfo(outFile).Length > 0;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        private static string Safe(string s)
-        {
-            foreach (var c in Path.GetInvalidFileNameChars())
-                s = s.Replace(c, '_');
-            return s;
-        }
-
-        public void OpenCdr(string path)
-        {
-            _app.Visible = true;
-            _app.OpenDocument(path);
-        }
-
-        public void Dispose()
-        {
-            if (_app != null)
-            {
-                try { _app.Quit(); } catch { }
-                try { Marshal.ReleaseComObject(_app); } catch { }
-                _app = null;
             }
         }
     }
-
-    public sealed class ExportedDesign
+    catch (Exception ex)
     {
-        public int PageNumber;
-        public int ObjectNumber;
-        public string PngPath;
+        MessageBox.Show("CDR open/export error:\n" + ex.Message);
     }
+    finally
+    {
+        try
+        {
+            if (doc != null) doc.Close();
+        }
+        catch { }
+    }
+
+    MessageBox.Show("Export results count: " + results.Count);
+    return results;
 }
