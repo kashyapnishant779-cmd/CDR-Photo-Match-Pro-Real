@@ -26,8 +26,8 @@ jobs:
         run: nuget install System.Data.SQLite.Core -Version 1.0.118.0 -OutputDirectory packages
       - name: Build Debug
         run: msbuild CDRPhotoMatchPro.csproj /p:Configuration=Debug /p:Platform="AnyCPU"
-      - name: Find netstandard DLL
-        run: Get-ChildItem -Path C:\ -Filter netstandard.dll -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
+      - name: Copy runtime netstandard DLL
+        run: copy "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\netstandard.dll" "bin\Debug\netstandard.dll"
 
                
       - name: Upload build output
