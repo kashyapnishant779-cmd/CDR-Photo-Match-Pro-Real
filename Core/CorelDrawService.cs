@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using Microsoft.CSharp.RuntimeBinder;
+using System.Runtime.InteropServices;
 
 namespace CDRPhotoMatchPro.Core
 {
@@ -19,7 +19,7 @@ namespace CDRPhotoMatchPro.Core
                 throw new InvalidOperationException("CorelDRAW COM not found.");
 
             _app = Activator.CreateInstance(type);
-            _app.Visible = false;
+            _app.Visible = true;
         }
 
         public IEnumerable<ExportedDesign> ExportDesigns(string cdrPath, string cacheRoot)
@@ -31,7 +31,7 @@ namespace CDRPhotoMatchPro.Core
 
             try
             {
-                doc = _app.OpenDocument(cdrPath, 0);
+                doc = _app.OpenDocument(cdrPath);
                 int pageCount = Convert.ToInt32(doc.Pages.Count);
 
                 for (int p = 1; p <= pageCount; p++)
@@ -39,77 +39,47 @@ namespace CDRPhotoMatchPro.Core
                     dynamic page = doc.Pages[p];
                     page.Activate();
 
-                    int objIndex = 0;
-                    bool shapeExported = false;
+                    int shapeCount = 0;
+                    try { shapeCount = Convert.ToInt32(page.Shapes.Count); } catch { shapeCount = 0; }
 
-                    try
+                    if (shapeCount <= 0)
                     {
-                        foreach (dynamic shape in page.Shapes)
+                        string pageFile = Path.Combine(cacheRoot, Safe(Path.GetFileNameWithoutExtension(cdrPath)) + "_p" + p + "_page.png");
+                        if (ExportCurrentPage(pageFile))
                         {
-                            objIndex++;
-
-                            string outFile = Path.Combine(
-                                cacheRoot,
-                                Safe(Path.GetFileNameWithoutExtension(cdrPath)) + "_p" + p + "_o" + objIndex + ".png"
-                            );
-
-                            ExportShape(shape, outFile);
-
-                            if (File.Exists(outFile))
-                            {
-                                shapeExported = true;
-                                results.Add(new ExportedDesign
-                                {
-                                    PageNumber = p,
-                                    ObjectNumber = objIndex,
-                                    PngPath = outFile
-                                });
-                            }
+                            results.Add(new ExportedDesign { PageNumber = p, ObjectNumber = 0, PngPath = pageFile });
                         }
-                    }
-                    catch (RuntimeBinderException)
-                    {
-                        string outFile = Path.Combine(
-                            cacheRoot,
-                            Safe(Path.GetFileNameWithoutExtension(cdrPath)) + "_p" + p + "_page.png"
-                        );
-
-                        page.Export(outFile, 774, 0);
-
-                        if (File.Exists(outFile))
-                        {
-                            results.Add(new ExportedDesign
-                            {
-                                PageNumber = p,
-                                ObjectNumber = 0,
-                                PngPath = outFile
-                            });
-                        }
+                        continue;
                     }
 
-                    if (!shapeExported && objIndex == 0)
+                    for (int i = 1; i <= shapeCount; i++)
                     {
-                        string outFile = Path.Combine(
-                            cacheRoot,
-                            Safe(Path.GetFileNameWithoutExtension(cdrPath)) + "_p" + p + "_page.png"
-                        );
+                        string outFile = Path.Combine(cacheRoot, Safe(Path.GetFileNameWithoutExtension(cdrPath)) + "_p" + p + "_o" + i + ".png");
 
                         try
                         {
-                            page.Export(outFile, 774, 0);
-
-                            if (File.Exists(outFile))
+                            dynamic shape = page.Shapes[i];
+                            if (ExportOneShape(shape, outFile))
                             {
                                 results.Add(new ExportedDesign
                                 {
                                     PageNumber = p,
-                                    ObjectNumber = 0,
+                                    ObjectNumber = i,
                                     PngPath = outFile
                                 });
                             }
                         }
                         catch
                         {
+                        }
+                    }
+
+                    if (results.Count == 0)
+                    {
+                        string pageFile = Path.Combine(cacheRoot, Safe(Path.GetFileNameWithoutExtension(cdrPath)) + "_p" + p + "_page.png");
+                        if (ExportCurrentPage(pageFile))
+                        {
+                            results.Add(new ExportedDesign { PageNumber = p, ObjectNumber = 0, PngPath = pageFile });
                         }
                     }
                 }
@@ -119,22 +89,75 @@ namespace CDRPhotoMatchPro.Core
                 if (doc != null)
                 {
                     try { doc.Close(); } catch { }
+                    try { Marshal.ReleaseComObject(doc); } catch { }
                 }
             }
 
             return results;
         }
 
-        private void ExportShape(dynamic shape, string outFile)
+        private bool ExportOneShape(dynamic shape, string outFile)
         {
             try
             {
+                if (File.Exists(outFile)) File.Delete(outFile);
+
                 shape.CreateSelection();
-                _app.ActiveSelection.Export(outFile, 774, 0);
+
+                dynamic sel = _app.ActiveSelection;
+                if (sel == null) return false;
+
+                try
+                {
+                    sel.ExportBitmap(outFile, 5, 0, 0, 800, 800).Finish();
+                }
+                catch
+                {
+                    try
+                    {
+                        sel.Export(outFile, 774, 0);
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+                }
+
+                return File.Exists(outFile) && new FileInfo(outFile).Length > 0;
             }
             catch
             {
-                try { shape.Export(outFile, 774, 0); } catch { }
+                return false;
+            }
+        }
+
+        private bool ExportCurrentPage(string outFile)
+        {
+            try
+            {
+                if (File.Exists(outFile)) File.Delete(outFile);
+
+                try
+                {
+                    _app.ActiveDocument.ExportBitmap(outFile, 5, 0, 0, 1200, 1200).Finish();
+                }
+                catch
+                {
+                    try
+                    {
+                        _app.ActiveDocument.Export(outFile, 774, 0);
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+                }
+
+                return File.Exists(outFile) && new FileInfo(outFile).Length > 0;
+            }
+            catch
+            {
+                return false;
             }
         }
 
@@ -142,14 +165,13 @@ namespace CDRPhotoMatchPro.Core
         {
             foreach (var c in Path.GetInvalidFileNameChars())
                 s = s.Replace(c, '_');
-
             return s;
         }
 
         public void OpenCdr(string path)
         {
             _app.Visible = true;
-            _app.OpenDocument(path, 0);
+            _app.OpenDocument(path);
         }
 
         public void Dispose()
@@ -157,6 +179,7 @@ namespace CDRPhotoMatchPro.Core
             if (_app != null)
             {
                 try { _app.Quit(); } catch { }
+                try { Marshal.ReleaseComObject(_app); } catch { }
                 _app = null;
             }
         }
