@@ -1,7 +1,7 @@
 using System;
-using System.Collections.Generic;
+using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
-using OpenCvSharp;
 
 namespace CDRPhotoMatchPro.Imaging
 {
@@ -9,43 +9,59 @@ namespace CDRPhotoMatchPro.Imaging
     {
         public byte[] ExtractDescriptorBytes(string imagePath)
         {
-            using (var img = Cv2.ImRead(imagePath, ImreadModes.Grayscale))
+            if (!File.Exists(imagePath))
+                throw new FileNotFoundException("Image not found", imagePath);
+
+            using (var original = new Bitmap(imagePath))
+            using (var small = new Bitmap(32, 32))
+            using (var g = Graphics.FromImage(small))
             {
-                if (img.Empty()) throw new InvalidOperationException("Image read failed: " + imagePath);
-                using (var normalized = new Mat())
-                using (var orb = ORB.Create(1500))
-                using (var descriptors = new Mat())
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.DrawImage(original, 0, 0, 32, 32);
+
+                byte[] data = new byte[32 * 32];
+
+                for (int y = 0; y < 32; y++)
                 {
-                    Cv2.Resize(img, normalized, new Size(900, 900), 0, 0, InterpolationFlags.Area);
-                    Cv2.EqualizeHist(normalized, normalized);
-                    KeyPoint[] kp; orb.DetectAndCompute(normalized, null, out kp, descriptors);
-                    if (descriptors.Empty()) return new byte[0];
-                    return descriptors.ToBytes();
+                    for (int x = 0; x < 32; x++)
+                    {
+                        Color c = small.GetPixel(x, y);
+                        int gray = (c.R + c.G + c.B) / 3;
+                        data[y * 32 + x] = (byte)gray;
+                    }
                 }
+
+                return data;
             }
         }
+
         public double Compare(byte[] queryDescriptor, byte[] indexedDescriptor)
         {
-            if (queryDescriptor == null || indexedDescriptor == null || queryDescriptor.Length == 0 || indexedDescriptor.Length == 0) return 0;
-            using (var q = new Mat(queryDescriptor.Length / 32, 32, MatType.CV_8UC1, queryDescriptor))
-            using (var t = new Mat(indexedDescriptor.Length / 32, 32, MatType.CV_8UC1, indexedDescriptor))
+            if (queryDescriptor == null || indexedDescriptor == null)
+                return 0;
 
-            using (var matcher = new BFMatcher(NormTypes.Hamming, false))
-            {
-                var matches = matcher.KnnMatch(q, t, 2);
-                int good = 0;
-                foreach (var pair in matches)
-                {
-                    if (pair.Length >= 2 && pair[0].Distance < 0.78 * pair[1].Distance) good++;
-                    else if (pair.Length == 1 && pair[0].Distance < 45) good++;
-                }
-                var basis = Math.Max(25.0, Math.Min(q.Rows, t.Rows));
-                return Math.Min(100.0, (good / basis) * 100.0);
-            }
+            if (queryDescriptor.Length == 0 || indexedDescriptor.Length == 0)
+                return 0;
+
+            int len = Math.Min(queryDescriptor.Length, indexedDescriptor.Length);
+            long diff = 0;
+
+            for (int i = 0; i < len; i++)
+                diff += Math.Abs(queryDescriptor[i] - indexedDescriptor[i]);
+
+            double maxDiff = len * 255.0;
+            double score = 100.0 - ((diff / maxDiff) * 100.0);
+
+            if (score < 0) score = 0;
+            if (score > 100) score = 100;
+
+            return score;
         }
-        public System.Drawing.Size ReadSize(string imagePath)
+
+        public Size ReadSize(string imagePath)
         {
-            using (var img = System.Drawing.Image.FromFile(imagePath)) return img.Size;
+            using (var img = Image.FromFile(imagePath))
+                return img.Size;
         }
     }
 }
