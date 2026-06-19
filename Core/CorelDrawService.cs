@@ -56,14 +56,16 @@ namespace CDRPhotoMatchPro.Core
 
                         string outFile = Path.Combine(
                             cacheRoot,
-                            Path.GetFileNameWithoutExtension(cdrPath) + "_p" + p + "_s" + s + ".png"
+                            Path.GetFileNameWithoutExtension(cdrPath) + "_p" + p + "_s" + s + ".jpg"
                         );
 
                         try
                         {
                             shape.CreateSelection();
 
-                            doc.ExportBitmap(outFile, 2, 1, 0, 800, 800).Finish();
+                            // CorelDRAW X4 compatible export attempt
+                            dynamic filter = doc.ExportEx(outFile, 774, 1);
+                            filter.Finish();
 
                             if (File.Exists(outFile))
                             {
@@ -76,7 +78,8 @@ namespace CDRPhotoMatchPro.Core
                                     FolderPath = folderPath,
                                     PageNumber = p,
                                     ObjectNumber = s,
-                                    ThumbnailPath = outFile
+                                    ThumbnailPath = outFile,
+                                    PngPath = outFile
                                 });
                             }
                             else
