@@ -31,6 +31,9 @@ namespace CDRPhotoMatchPro.Core
 
                 MessageBox.Show("CDR files found: " + files.Count);
 
+                int insertedCount = 0;
+                int failedCount = 0;
+
                 using (var db = new Database(_dbPath))
                 {
                     if (fullRescan)
@@ -54,18 +57,18 @@ namespace CDRPhotoMatchPro.Core
                         var sha = scanner.Sha1OfFile(file);
 
                         if (!db.NeedsIndex(file, info.LastWriteTimeUtc, info.Length, sha))
-                        {
-                            MessageBox.Show("Skipped, already indexed:\n" + file);
                             continue;
-                        }
 
                         var cdrId = db.UpsertCdr(file, info.LastWriteTimeUtc, info.Length, sha);
 
                         using (var corel = new CorelDrawService())
                         {
                             var matcher = new ImageMatcher();
+                            var exported = corel.ExportDesigns(file, Path.Combine(_cacheRoot, sha)).ToList();
 
-                            foreach (var design in corel.ExportDesigns(file, Path.Combine(_cacheRoot, sha)))
+                            MessageBox.Show("Exported images count: " + exported.Count);
+
+                            foreach (var design in exported)
                             {
                                 try
                                 {
@@ -74,11 +77,9 @@ namespace CDRPhotoMatchPro.Core
                                     if (string.IsNullOrEmpty(imgPath))
                                         imgPath = design.ThumbnailPath;
 
-                                    MessageBox.Show("Index image:\n" + imgPath);
-
-                                    if (!File.Exists(imgPath))
+                                    if (string.IsNullOrEmpty(imgPath) || !File.Exists(imgPath))
                                     {
-                                        MessageBox.Show("Image not found:\n" + imgPath);
+                                        failedCount++;
                                         continue;
                                     }
 
@@ -87,7 +88,7 @@ namespace CDRPhotoMatchPro.Core
 
                                     if (desc == null || desc.Length == 0)
                                     {
-                                        MessageBox.Show("Descriptor empty:\n" + imgPath);
+                                        failedCount++;
                                         continue;
                                     }
 
@@ -101,18 +102,23 @@ namespace CDRPhotoMatchPro.Core
                                         size.Height
                                     );
 
-                                    MessageBox.Show("DB Insert OK:\n" + imgPath);
+                                    insertedCount++;
                                 }
-                                catch (Exception ex)
+                                catch
                                 {
-                                    MessageBox.Show("Image index failed:\n" + ex.ToString());
+                                    failedCount++;
                                 }
                             }
                         }
                     }
                 }
 
-                MessageBox.Show("Indexing complete");
+                MessageBox.Show(
+                    "Indexing complete\n" +
+                    "Inserted designs: " + insertedCount + "\n" +
+                    "Failed designs: " + failedCount
+                );
+
             }, token, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         }
     }
