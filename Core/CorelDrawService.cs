@@ -63,16 +63,18 @@ namespace CDRPhotoMatchPro.Core
                         {
                             shape.CreateSelection();
 
-                           dynamic export = doc.Export(
-                               774,
+                           dynamic export = doc.ExportBitmap(
                                outFile,
-                               1
+                               5,
+                               1,
+                               0,
+                               300,
+                               300
                            );
 
-                            export.Finish();
+                           export.Finish();
 
-
-                            if (File.Exists(outFile))
+                           if (File.Exists(outFile))
                             {
                                 MessageBox.Show("Export OK:\n" + outFile);
 
