@@ -63,8 +63,16 @@ namespace CDRPhotoMatchPro.Core
                         {
                             shape.CreateSelection();
 
-                            // CorelDRAW X4 simple Export method
-                            doc.Export(outFile, 774, 1);
+                            dynamic export = doc.ExportBitmap(
+                                outFile,
+                                5,
+                                1,
+                                0,
+                                300,
+                                300
+                            );
+
+                            export.Finish();
 
                             if (File.Exists(outFile))
                             {
@@ -88,14 +96,14 @@ namespace CDRPhotoMatchPro.Core
                         }
                         catch (Exception ex)
                         {
-                            MessageBox.Show("Shape export error:\n" + ex.Message);
+                            MessageBox.Show("Shape export error:\n" + ex.ToString());
                         }
                     }
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show("CDR open/export error:\n" + ex.Message);
+                MessageBox.Show("CDR open/export error:\n" + ex.ToString());
             }
             finally
             {
