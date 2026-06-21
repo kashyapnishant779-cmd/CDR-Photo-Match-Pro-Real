@@ -52,9 +52,22 @@ namespace CDRPhotoMatchPro.Data
         public void InsertDesign(long cdrId, int page, int obj, string thumb, byte[] desc, int w, int h)
         {
             string path = _cdrPaths.ContainsKey(cdrId) ? _cdrPaths[cdrId] : "";
+            string fileName = Path.GetFileName(path);
+            string folderPath = Path.GetDirectoryName(path);
             string b64 = desc == null ? "" : Convert.ToBase64String(desc);
 
-            AppendLine("DES|" + cdrId + "|" + page + "|" + obj + "|" + w + "|" + h + "|" + Encode(thumb) + "|" + b64 + "|" + Encode(path));
+            AppendLine(
+                "DES|" + cdrId + "|" +
+                page + "|" +
+                obj + "|" +
+                w + "|" +
+                h + "|" +
+                Encode(thumb) + "|" +
+                b64 + "|" +
+                Encode(path) + "|" +
+                Encode(fileName) + "|" +
+                Encode(folderPath)
+            );
         }
 
         public List<DesignRecord> LoadDesigns()
@@ -73,17 +86,26 @@ namespace CDRPhotoMatchPro.Data
                 {
                     DesignRecord r = new DesignRecord();
 
-                    Set(r, "CdrId", ToLong(p[1]));
-                    Set(r, "Page", ToInt(p[2]));
-                    Set(r, "ObjectIndex", ToInt(p[3]));
-                    Set(r, "Obj", ToInt(p[3]));
-                    Set(r, "Width", ToInt(p[4]));
-                    Set(r, "Height", ToInt(p[5]));
-                    Set(r, "ThumbnailPath", Decode(p[6]));
-                    Set(r, "Thumb", Decode(p[6]));
-                    Set(r, "Descriptor", string.IsNullOrEmpty(p[7]) ? null : Convert.FromBase64String(p[7]));
-                    Set(r, "CdrPath", Decode(p[8]));
-                    Set(r, "Path", Decode(p[8]));
+                    r.CdrFileId = ToLong(p[1]);
+                    r.PageNumber = ToInt(p[2]);
+                    r.ObjectNumber = ToInt(p[3]);
+                    r.Width = ToInt(p[4]);
+                    r.Height = ToInt(p[5]);
+                    r.ThumbnailPath = Decode(p[6]);
+                    r.PngPath = r.ThumbnailPath;
+                    r.Descriptor = string.IsNullOrEmpty(p[7]) ? null : Convert.FromBase64String(p[7]);
+                    r.CdrPath = Decode(p[8]);
+
+                    if (p.Length >= 11)
+                    {
+                        r.FileName = Decode(p[9]);
+                        r.FolderPath = Decode(p[10]);
+                    }
+                    else
+                    {
+                        r.FileName = Path.GetFileName(r.CdrPath);
+                        r.FolderPath = Path.GetDirectoryName(r.CdrPath);
+                    }
 
                     list.Add(r);
                 }
@@ -172,22 +194,6 @@ namespace CDRPhotoMatchPro.Data
             long v;
             long.TryParse(s, out v);
             return v;
-        }
-
-        private static void Set(object obj, string name, object value)
-        {
-            var t = obj.GetType();
-
-            var prop = t.GetProperty(name);
-            if (prop != null && prop.CanWrite)
-            {
-                prop.SetValue(obj, value, null);
-                return;
-            }
-
-            var field = t.GetField(name);
-            if (field != null)
-                field.SetValue(obj, value);
         }
     }
 }
