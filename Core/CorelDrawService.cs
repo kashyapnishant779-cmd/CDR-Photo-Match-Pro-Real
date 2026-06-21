@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
+using System.Threading;
 using System.Windows.Forms;
 
 namespace CDRPhotoMatchPro.Core
@@ -47,38 +50,30 @@ namespace CDRPhotoMatchPro.Core
                         Path.GetFileNameWithoutExtension(cdrPath) + "_p" + p + ".jpg"
                     );
 
-                    try
-                    {
-                     doc.ClearSelection();
-                     page.Shapes.All().CreateSelection();
-                     doc.Export(outFile, 774);
+                    bool ok = ExportPageByClipboard(page, outFile);
 
-                        if (File.Exists(outFile))
-                        {
-                            results.Add(new DesignRecord
-                            {
-                                CdrPath = cdrPath,
-                                FileName = fileName,
-                                FolderPath = folderPath,
-                                PageNumber = p,
-                                ObjectNumber = 0,
-                                ThumbnailPath = outFile,
-                                PngPath = outFile
-                            });
-                        }
-                    }
-                    catch (Exception ex)
+                    if (ok && File.Exists(outFile))
                     {
-                        MessageBox.Show(
-                            "Page export error:\n\n" +
-                            ex.ToString()
-                        );
+                        results.Add(new DesignRecord
+                        {
+                            CdrPath = cdrPath,
+                            FileName = fileName,
+                            FolderPath = folderPath,
+                            PageNumber = p,
+                            ObjectNumber = 0,
+                            ThumbnailPath = outFile,
+                            PngPath = outFile
+                        });
+                    }
+                    else
+                    {
+                        MessageBox.Show("Page export failed:\n" + outFile);
                     }
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show("CDR open/export error:\n" + ex.Message);
+                MessageBox.Show("CDR open/export error:\n\n" + ex.ToString());
             }
             finally
             {
@@ -86,6 +81,64 @@ namespace CDRPhotoMatchPro.Core
             }
 
             return results;
+        }
+
+        private bool ExportPageByClipboard(dynamic page, string outFile)
+        {
+            bool success = false;
+            Exception error = null;
+
+            Thread t = new Thread(() =>
+            {
+                try
+                {
+                    Clipboard.Clear();
+
+                    page.Shapes.All().CreateSelection();
+
+                    try
+                    {
+                        _app.ActiveSelection.Copy();
+                    }
+                    catch
+                    {
+                        page.Shapes.All().CreateSelection();
+                        SendKeys.SendWait("^c");
+                    }
+
+                    for (int i = 0; i < 20; i++)
+                    {
+                        Application.DoEvents();
+                        Thread.Sleep(250);
+
+                        if (Clipboard.ContainsImage())
+                        {
+                            using (Image img = Clipboard.GetImage())
+                            {
+                                if (img != null)
+                                {
+                                    img.Save(outFile, ImageFormat.Jpeg);
+                                    success = File.Exists(outFile);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    error = ex;
+                }
+            });
+
+            t.SetApartmentState(ApartmentState.STA);
+            t.Start();
+            t.Join();
+
+            if (!success && error != null)
+                MessageBox.Show("Clipboard export error:\n\n" + error.ToString());
+
+            return success;
         }
 
         public void Dispose()
