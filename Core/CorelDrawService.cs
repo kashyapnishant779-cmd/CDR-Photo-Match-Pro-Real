@@ -49,8 +49,9 @@ namespace CDRPhotoMatchPro.Core
 
                     try
                     {
+                     doc.ClearSelection();
                      page.Shapes.All().CreateSelection();
-                     doc.Selection.Export(outFile, 774);
+                     doc.Export(outFile, 774);
 
                         if (File.Exists(outFile))
                         {
