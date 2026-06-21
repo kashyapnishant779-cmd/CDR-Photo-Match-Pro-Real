@@ -75,10 +75,12 @@ export.Finish();
                     }
                     catch (Exception ex)
                     {
-                        MessageBox.Show("Page export error:\n" + ex.Message);
+                        MessageBox.Show(
+                             "Page export error:\n\n" +
+                             ex.ToString()
+                       );
                     }
-                }
-            }
+
             catch (Exception ex)
             {
                 MessageBox.Show("CDR open/export error:\n" + ex.Message);
