@@ -49,7 +49,7 @@ namespace CDRPhotoMatchPro.Core
 
                     try
                     {
-                     page.Export(outFile, 774);   
+                     doc.ActivePage.Export(outFile, 774); 
 
                         if (File.Exists(outFile))
                         {
