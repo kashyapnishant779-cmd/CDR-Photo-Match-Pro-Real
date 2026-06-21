@@ -57,7 +57,7 @@ namespace CDRPhotoMatchPro.Core
                             1200
                         );
 
-export.Finish();
+                        export.Finish();
 
                         if (File.Exists(outFile))
                         {
@@ -76,11 +76,12 @@ export.Finish();
                     catch (Exception ex)
                     {
                         MessageBox.Show(
-                             "Page export error:\n\n" +
-                             ex.ToString()
-                       );
+                            "Page export error:\n\n" +
+                            ex.ToString()
+                        );
                     }
-
+                }
+            }
             catch (Exception ex)
             {
                 MessageBox.Show("CDR open/export error:\n" + ex.Message);
