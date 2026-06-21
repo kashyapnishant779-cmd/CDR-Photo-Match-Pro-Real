@@ -49,15 +49,7 @@ namespace CDRPhotoMatchPro.Core
 
                     try
                     {
-                        dynamic export = doc.ExportBitmap(
-                            outFile,
-                            774,
-                            1,
-                            1200,
-                            1200
-                        );
-
-                        export.Finish();
+                     page.Export(outFile, 774);   
 
                         if (File.Exists(outFile))
                         {
