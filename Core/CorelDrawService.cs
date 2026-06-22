@@ -45,29 +45,34 @@ namespace CDRPhotoMatchPro.Core
                     dynamic page = doc.Pages[p];
                     page.Activate();
 
-                    string outFile = Path.Combine(
-                        cacheRoot,
-                        Path.GetFileNameWithoutExtension(cdrPath) + "_p" + p + ".jpg"
-                    );
+                    int shapeCount = 0;
+                    try { shapeCount = Convert.ToInt32(page.Shapes.Count); } catch { shapeCount = 0; }
 
-                    bool ok = ExportPageByClipboard(page, outFile);
+                    if (shapeCount <= 0)
+                        continue;
 
-                    if (ok && File.Exists(outFile))
+                    for (int s = 1; s <= shapeCount; s++)
                     {
-                        results.Add(new DesignRecord
+                        string outFile = Path.Combine(
+                            cacheRoot,
+                            Path.GetFileNameWithoutExtension(cdrPath) + "_p" + p + "_o" + s + ".jpg"
+                        );
+
+                        bool ok = ExportShapeByClipboard(page, s, outFile);
+
+                        if (ok && File.Exists(outFile))
                         {
-                            CdrPath = cdrPath,
-                            FileName = fileName,
-                            FolderPath = folderPath,
-                            PageNumber = p,
-                            ObjectNumber = 0,
-                            ThumbnailPath = outFile,
-                            PngPath = outFile
-                        });
-                    }
-                    else
-                    {
-                        MessageBox.Show("Page export failed:\n" + outFile);
+                            results.Add(new DesignRecord
+                            {
+                                CdrPath = cdrPath,
+                                FileName = fileName,
+                                FolderPath = folderPath,
+                                PageNumber = p,
+                                ObjectNumber = s,
+                                ThumbnailPath = outFile,
+                                PngPath = outFile
+                            });
+                        }
                     }
                 }
             }
@@ -83,7 +88,7 @@ namespace CDRPhotoMatchPro.Core
             return results;
         }
 
-        private bool ExportPageByClipboard(dynamic page, string outFile)
+        private bool ExportShapeByClipboard(dynamic page, int shapeIndex, string outFile)
         {
             bool success = false;
             Exception error = null;
@@ -94,7 +99,15 @@ namespace CDRPhotoMatchPro.Core
                 {
                     Clipboard.Clear();
 
-                    page.Shapes.All().CreateSelection();
+                    dynamic shape = page.Shapes[shapeIndex];
+
+                    try
+                    {
+                        _app.ActiveDocument.ClearSelection();
+                    }
+                    catch { }
+
+                    shape.CreateSelection();
 
                     try
                     {
@@ -102,7 +115,6 @@ namespace CDRPhotoMatchPro.Core
                     }
                     catch
                     {
-                        page.Shapes.All().CreateSelection();
                         SendKeys.SendWait("^c");
                     }
 
@@ -136,7 +148,7 @@ namespace CDRPhotoMatchPro.Core
             t.Join();
 
             if (!success && error != null)
-                MessageBox.Show("Clipboard export error:\n\n" + error.ToString());
+                MessageBox.Show("Shape export error:\n\n" + error.ToString());
 
             return success;
         }
