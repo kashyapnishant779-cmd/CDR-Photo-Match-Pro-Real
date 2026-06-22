@@ -15,6 +15,7 @@ namespace CDRPhotoMatchPro.Data
         public Database(string dbPath)
         {
             _dbPath = dbPath;
+
             var dir = Path.GetDirectoryName(dbPath);
             if (!string.IsNullOrEmpty(dir))
                 Directory.CreateDirectory(dir);
@@ -24,18 +25,28 @@ namespace CDRPhotoMatchPro.Data
 
         public bool NeedsIndex(string path, DateTime lastWriteUtc, long sizeBytes, string sha1)
         {
-            if (!File.Exists(_dbPath)) return true;
+            if (!File.Exists(_dbPath))
+                return true;
 
-            string key = "CDR|" + MakeId(path).ToString(CultureInfo.InvariantCulture) + "|";
+            long id = MakeId(path);
+            string key = "CDR|" + id.ToString(CultureInfo.InvariantCulture) + "|";
+
             foreach (string line in File.ReadAllLines(_dbPath))
             {
-                if (line.StartsWith(key, StringComparison.OrdinalIgnoreCase))
+                if (!line.StartsWith(key, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                string[] p = line.Split('|');
+
+                if (p.Length >= 5 &&
+                    p[2] == lastWriteUtc.Ticks.ToString(CultureInfo.InvariantCulture) &&
+                    p[3] == sizeBytes.ToString(CultureInfo.InvariantCulture) &&
+                    p[4] == sha1)
                 {
-                    string[] p = line.Split('|');
-                    if (p.Length >= 5 && p[2] == lastWriteUtc.Ticks.ToString() && p[3] == sizeBytes.ToString() && p[4] == sha1)
-                        return false;
+                    return false;
                 }
             }
+
             return true;
         }
 
@@ -44,43 +55,75 @@ namespace CDRPhotoMatchPro.Data
             long id = MakeId(path);
             _cdrPaths[id] = path;
 
+            // Same CDR ka old file record aur old designs hatao,
+            // warna incremental scan me duplicate results aayenge.
             RemoveLines("CDR|" + id + "|");
-            AppendLine("CDR|" + id + "|" + lastWriteUtc.Ticks + "|" + sizeBytes + "|" + sha1 + "|" + Encode(path));
+            RemoveLines("DES|" + id + "|");
+
+            AppendLine(
+                "CDR|" + id + "|" +
+                lastWriteUtc.Ticks.ToString(CultureInfo.InvariantCulture) + "|" +
+                sizeBytes.ToString(CultureInfo.InvariantCulture) + "|" +
+                sha1 + "|" +
+                Encode(path)
+            );
+
             return id;
         }
 
-        public void InsertDesign(long cdrId, int page, int obj, string thumb, byte[] desc, int w, int h)
+        public void InsertDesign(
+            long cdrId,
+            int pageNumber,
+            int designNumber,
+            string thumbnailPath,
+            string pngPath,
+            byte[] descriptor,
+            int width,
+            int height,
+            string exportMode,
+            int shapeCount)
         {
-            string path = _cdrPaths.ContainsKey(cdrId) ? _cdrPaths[cdrId] : "";
-            string fileName = Path.GetFileName(path);
-            string folderPath = Path.GetDirectoryName(path);
-            string b64 = desc == null ? "" : Convert.ToBase64String(desc);
+            string cdrPath = _cdrPaths.ContainsKey(cdrId) ? _cdrPaths[cdrId] : "";
+            string fileName = Path.GetFileName(cdrPath);
+            string folderPath = Path.GetDirectoryName(cdrPath);
+            string b64 = descriptor == null ? "" : Convert.ToBase64String(descriptor);
 
             AppendLine(
                 "DES|" + cdrId + "|" +
-                page + "|" +
-                obj + "|" +
-                w + "|" +
-                h + "|" +
-                Encode(thumb) + "|" +
+                pageNumber.ToString(CultureInfo.InvariantCulture) + "|" +
+                designNumber.ToString(CultureInfo.InvariantCulture) + "|" +
+                width.ToString(CultureInfo.InvariantCulture) + "|" +
+                height.ToString(CultureInfo.InvariantCulture) + "|" +
+                Encode(thumbnailPath) + "|" +
+                Encode(pngPath) + "|" +
                 b64 + "|" +
-                Encode(path) + "|" +
+                Encode(cdrPath) + "|" +
                 Encode(fileName) + "|" +
-                Encode(folderPath)
+                Encode(folderPath) + "|" +
+                Encode(exportMode) + "|" +
+                shapeCount.ToString(CultureInfo.InvariantCulture)
             );
+        }
+
+        // Purane Indexer code ke liye compatibility overload.
+        public void InsertDesign(long cdrId, int page, int obj, string thumb, byte[] desc, int w, int h)
+        {
+            InsertDesign(cdrId, page, obj, thumb, thumb, desc, w, h, "legacy", 0);
         }
 
         public List<DesignRecord> LoadDesigns()
         {
             var list = new List<DesignRecord>();
-            if (!File.Exists(_dbPath)) return list;
+
+            if (!File.Exists(_dbPath))
+                return list;
 
             foreach (string line in File.ReadAllLines(_dbPath))
             {
-                if (!line.StartsWith("DES|", StringComparison.OrdinalIgnoreCase)) continue;
+                if (!line.StartsWith("DES|", StringComparison.OrdinalIgnoreCase))
+                    continue;
 
                 string[] p = line.Split('|');
-                if (p.Length < 9) continue;
 
                 try
                 {
@@ -88,28 +131,44 @@ namespace CDRPhotoMatchPro.Data
 
                     r.CdrFileId = ToLong(p[1]);
                     r.PageNumber = ToInt(p[2]);
-                    r.ObjectNumber = ToInt(p[3]);
+                    r.DesignNumber = ToInt(p[3]);
                     r.Width = ToInt(p[4]);
                     r.Height = ToInt(p[5]);
-                    r.ThumbnailPath = Decode(p[6]);
-                    r.PngPath = r.ThumbnailPath;
-                    r.Descriptor = string.IsNullOrEmpty(p[7]) ? null : Convert.FromBase64String(p[7]);
-                    r.CdrPath = Decode(p[8]);
 
-                    if (p.Length >= 11)
+                    // New format:
+                    // DES|cdrId|page|design|w|h|thumb|png|desc|cdrPath|fileName|folderPath|exportMode|shapeCount
+                    if (p.Length >= 14)
                     {
-                        r.FileName = Decode(p[9]);
-                        r.FolderPath = Decode(p[10]);
+                        r.ThumbnailPath = Decode(p[6]);
+                        r.PngPath = Decode(p[7]);
+                        r.Descriptor = string.IsNullOrEmpty(p[8]) ? null : Convert.FromBase64String(p[8]);
+                        r.CdrPath = Decode(p[9]);
+                        r.FileName = Decode(p[10]);
+                        r.FolderPath = Decode(p[11]);
+                        r.ExportMode = Decode(p[12]);
+                        r.ShapeCount = ToInt(p[13]);
                     }
                     else
                     {
-                        r.FileName = Path.GetFileName(r.CdrPath);
-                        r.FolderPath = Path.GetDirectoryName(r.CdrPath);
+                        // Old format support:
+                        // DES|cdrId|page|obj|w|h|thumb|desc|cdrPath|fileName|folderPath
+                        r.ThumbnailPath = Decode(p[6]);
+                        r.PngPath = r.ThumbnailPath;
+                        r.Descriptor = string.IsNullOrEmpty(p[7]) ? null : Convert.FromBase64String(p[7]);
+                        r.CdrPath = p.Length >= 9 ? Decode(p[8]) : "";
+                        r.FileName = p.Length >= 10 ? Decode(p[9]) : Path.GetFileName(r.CdrPath);
+                        r.FolderPath = p.Length >= 11 ? Decode(p[10]) : Path.GetDirectoryName(r.CdrPath);
+                        r.ExportMode = "old";
+                        r.ShapeCount = 0;
                     }
 
-                    list.Add(r);
+                    if (!string.IsNullOrEmpty(r.CdrPath))
+                        list.Add(r);
                 }
-                catch { }
+                catch
+                {
+                    // Corrupt line skip
+                }
             }
 
             return list;
@@ -127,16 +186,22 @@ namespace CDRPhotoMatchPro.Data
             _cdrPaths.Clear();
         }
 
-        public void Dispose() { }
+        public void Dispose()
+        {
+        }
 
         private void LoadCdrMap()
         {
-            if (!File.Exists(_dbPath)) return;
+            if (!File.Exists(_dbPath))
+                return;
 
             foreach (string line in File.ReadAllLines(_dbPath))
             {
-                if (!line.StartsWith("CDR|", StringComparison.OrdinalIgnoreCase)) continue;
+                if (!line.StartsWith("CDR|", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
                 string[] p = line.Split('|');
+
                 if (p.Length >= 6)
                     _cdrPaths[ToLong(p[1])] = Decode(p[5]);
             }
@@ -149,12 +214,16 @@ namespace CDRPhotoMatchPro.Data
 
         private void RemoveLines(string prefix)
         {
-            if (!File.Exists(_dbPath)) return;
+            if (!File.Exists(_dbPath))
+                return;
 
             var lines = new List<string>();
+
             foreach (string line in File.ReadAllLines(_dbPath))
+            {
                 if (!line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                     lines.Add(line);
+            }
 
             File.WriteAllLines(_dbPath, lines.ToArray(), Encoding.UTF8);
         }
@@ -164,21 +233,30 @@ namespace CDRPhotoMatchPro.Data
             unchecked
             {
                 long hash = 1469598103934665603L;
+
                 foreach (char c in path.ToLowerInvariant())
                     hash = (hash ^ c) * 1099511628211L;
+
+                if (hash == long.MinValue)
+                    return long.MaxValue;
+
                 return Math.Abs(hash);
             }
         }
 
         private static string Encode(string s)
         {
-            if (s == null) return "";
+            if (s == null)
+                return "";
+
             return Convert.ToBase64String(Encoding.UTF8.GetBytes(s));
         }
 
         private static string Decode(string s)
         {
-            if (string.IsNullOrEmpty(s)) return "";
+            if (string.IsNullOrEmpty(s))
+                return "";
+
             return Encoding.UTF8.GetString(Convert.FromBase64String(s));
         }
 
