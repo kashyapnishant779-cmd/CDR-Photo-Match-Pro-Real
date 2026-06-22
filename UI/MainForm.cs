@@ -15,103 +15,341 @@ namespace CDRPhotoMatchPro.UI
     public sealed class MainForm : Form
     {
         private readonly string AppRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CDRPhotoMatchPro");
+
         private string DbPath { get { return Path.Combine(AppRoot, "cdr_index.sqlite"); } }
         private string CachePath { get { return Path.Combine(AppRoot, "thumb_cache"); } }
-        private TabControl tabs; private TextBox imagePath, scanRoot, thresholdBox; private DataGridView grid; private PictureBox preview; private Label status; private CancellationTokenSource cts;
+
+        private TabControl tabs;
+        private TextBox imagePath, scanRoot, thresholdBox;
+        private DataGridView grid;
+        private PictureBox preview;
+        private Label status;
+        private CancellationTokenSource cts;
 
         public MainForm()
         {
-            Text = "CDR Photo Match Pro"; Width = 1120; Height = 720; StartPosition = FormStartPosition.CenterScreen;
-            Directory.CreateDirectory(AppRoot); Directory.CreateDirectory(CachePath); using (var db = new Database(DbPath)) { }
-            BuildUi(); AllowDrop = true; DragEnter += OnDragEnter; DragDrop += OnDragDrop;
+            Text = "CDR Photo Match Pro";
+            Width = 1200;
+            Height = 720;
+            StartPosition = FormStartPosition.CenterScreen;
+
+            Directory.CreateDirectory(AppRoot);
+            Directory.CreateDirectory(CachePath);
+
+            using (var db = new Database(DbPath)) { }
+
+            BuildUi();
+
+            AllowDrop = true;
+            DragEnter += OnDragEnter;
+            DragDrop += OnDragDrop;
         }
+
         private void BuildUi()
         {
-            tabs = new TabControl { Dock = DockStyle.Fill }; Controls.Add(tabs);
-            BuildSearchTab(); BuildScanTab(); BuildIndexTab(); BuildSettingsTab();
-            status = new Label { Dock = DockStyle.Bottom, Height = 26, Text = "Ready", BorderStyle = BorderStyle.Fixed3D }; Controls.Add(status);
+            tabs = new TabControl { Dock = DockStyle.Fill };
+            Controls.Add(tabs);
+
+            BuildSearchTab();
+            BuildScanTab();
+            BuildIndexTab();
+            BuildSettingsTab();
+
+            status = new Label
+            {
+                Dock = DockStyle.Bottom,
+                Height = 28,
+                Text = "Ready",
+                BorderStyle = BorderStyle.Fixed3D
+            };
+
+            Controls.Add(status);
         }
+
         private void BuildSearchTab()
         {
-            var page = new TabPage("Search"); tabs.TabPages.Add(page);
-            var top = new Panel { Dock = DockStyle.Top, Height = 46 }; page.Controls.Add(top);
-            imagePath = new TextBox { Left = 10, Top = 12, Width = 620 }; top.Controls.Add(imagePath);
-            var browse = new Button { Text = "Browse Image", Left = 640, Top = 10, Width = 110 }; browse.Click += delegate { PickImage(); }; top.Controls.Add(browse);
-            var search = new Button { Text = "Search", Left = 760, Top = 10, Width = 90 }; search.Click += delegate { SearchImage(); }; top.Controls.Add(search);
-            preview = new PictureBox { Dock = DockStyle.Right, Width = 300, SizeMode = PictureBoxSizeMode.Zoom, BorderStyle = BorderStyle.FixedSingle }; page.Controls.Add(preview);
-            grid = new DataGridView { Dock = DockStyle.Fill, ReadOnly = true, AutoGenerateColumns = false, AllowUserToAddRows = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect };
+            var page = new TabPage("Search");
+            tabs.TabPages.Add(page);
+
+            var top = new Panel { Dock = DockStyle.Top, Height = 46 };
+            page.Controls.Add(top);
+
+            imagePath = new TextBox { Left = 10, Top = 12, Width = 620 };
+            top.Controls.Add(imagePath);
+
+            var browse = new Button { Text = "Browse Image", Left = 640, Top = 10, Width = 110 };
+            browse.Click += delegate { PickImage(); };
+            top.Controls.Add(browse);
+
+            var search = new Button { Text = "Search", Left = 760, Top = 10, Width = 90 };
+            search.Click += delegate { SearchImage(); };
+            top.Controls.Add(search);
+
+            preview = new PictureBox
+            {
+                Dock = DockStyle.Right,
+                Width = 320,
+                SizeMode = PictureBoxSizeMode.Zoom,
+                BorderStyle = BorderStyle.FixedSingle
+            };
+            page.Controls.Add(preview);
+
+            grid = new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                ReadOnly = true,
+                AutoGenerateColumns = false,
+                AllowUserToAddRows = false,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect
+            };
+
             grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Match %", DataPropertyName = "MatchPercent", Width = 80 });
-            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "CDR File", DataPropertyName = "CdrFileName", Width = 180 });
-            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Folder Path", DataPropertyName = "FullFolderPath", Width = 360 });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "CDR File", DataPropertyName = "CdrFileName", Width = 170 });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Folder Path", DataPropertyName = "FullFolderPath", Width = 330 });
             grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Page", DataPropertyName = "PageNumber", Width = 60 });
-            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Object", DataPropertyName = "ObjectNumber", Width = 70 });
-            grid.DoubleClick += OnGridDoubleClick; grid.SelectionChanged += OnGridSelectionChanged; page.Controls.Add(grid);
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Design No", DataPropertyName = "DesignNumber", Width = 80 });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Mode", DataPropertyName = "ExportMode", Width = 110 });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Shapes", DataPropertyName = "ShapeCount", Width = 70 });
+
+            grid.DoubleClick += OnGridDoubleClick;
+            grid.SelectionChanged += OnGridSelectionChanged;
+
+            page.Controls.Add(grid);
         }
+
         private void BuildScanTab()
         {
-            var page = new TabPage("Scan"); tabs.TabPages.Add(page);
-            scanRoot = new TextBox { Left = 20, Top = 25, Width = 500, Text = "D:\\" }; page.Controls.Add(scanRoot);
-            var start = new Button { Text = "Start Incremental Scan", Left = 540, Top = 23, Width = 160 }; start.Click += delegate { StartScan(false); }; page.Controls.Add(start);
-            var rescan = new Button { Text = "Full Rescan", Left = 710, Top = 23, Width = 110 }; rescan.Click += delegate { StartScan(true); }; page.Controls.Add(rescan);
-            var cancel = new Button { Text = "Cancel", Left = 830, Top = 23, Width = 90 }; cancel.Click += delegate { if (cts != null) cts.Cancel(); }; page.Controls.Add(cancel);
-            var info = new Label { Left = 20, Top = 75, Width = 900, Height = 120, Text = "This scans CDR files recursively, opens them through CorelDRAW COM, exports page/object thumbnails, extracts OpenCV ORB descriptors, and stores everything in SQLite." }; page.Controls.Add(info);
+            var page = new TabPage("Scan");
+            tabs.TabPages.Add(page);
+
+            scanRoot = new TextBox { Left = 20, Top = 25, Width = 500, Text = "D:\\" };
+            page.Controls.Add(scanRoot);
+
+            var start = new Button { Text = "Start Incremental Scan", Left = 540, Top = 23, Width = 160 };
+            start.Click += delegate { StartScan(false); };
+            page.Controls.Add(start);
+
+            var rescan = new Button { Text = "Full Rescan", Left = 710, Top = 23, Width = 110 };
+            rescan.Click += delegate { StartScan(true); };
+            page.Controls.Add(rescan);
+
+            var cancel = new Button { Text = "Cancel", Left = 830, Top = 23, Width = 90 };
+            cancel.Click += delegate { if (cts != null) cts.Cancel(); };
+            page.Controls.Add(cancel);
+
+            var info = new Label
+            {
+                Left = 20,
+                Top = 75,
+                Width = 950,
+                Height = 140,
+                Text = "This scans CDR files recursively, opens them through CorelDRAW COM, groups nearby shapes as complete designs, exports each design thumbnail, extracts image descriptors, and stores CDR file path + page number + design number."
+            };
+            page.Controls.Add(info);
         }
+
         private void BuildIndexTab()
         {
-            var page = new TabPage("Index"); tabs.TabPages.Add(page);
-            var openDb = new Button { Text = "Open Database Folder", Left = 20, Top = 25, Width = 180 }; openDb.Click += delegate { Process.Start(AppRoot); }; page.Controls.Add(openDb);
-            var openCache = new Button { Text = "Open Thumbnail Cache", Left = 220, Top = 25, Width = 180 }; openCache.Click += delegate { Process.Start(CachePath); }; page.Controls.Add(openCache);
-            var count = new Button { Text = "Show Indexed Count", Left = 420, Top = 25, Width = 150 }; count.Click += delegate { using (var db = new Database(DbPath)) MessageBox.Show("Indexed designs: " + db.LoadDesigns().Count); }; page.Controls.Add(count);
+            var page = new TabPage("Index");
+            tabs.TabPages.Add(page);
+
+            var openDb = new Button { Text = "Open Database Folder", Left = 20, Top = 25, Width = 180 };
+            openDb.Click += delegate { Process.Start(AppRoot); };
+            page.Controls.Add(openDb);
+
+            var openCache = new Button { Text = "Open Thumbnail Cache", Left = 220, Top = 25, Width = 180 };
+            openCache.Click += delegate { Process.Start(CachePath); };
+            page.Controls.Add(openCache);
+
+            var count = new Button { Text = "Show Indexed Count", Left = 420, Top = 25, Width = 150 };
+            count.Click += delegate
+            {
+                using (var db = new Database(DbPath))
+                    MessageBox.Show("Indexed designs: " + db.LoadDesigns().Count);
+            };
+            page.Controls.Add(count);
         }
+
         private void BuildSettingsTab()
         {
-            var page = new TabPage("Settings"); tabs.TabPages.Add(page);
+            var page = new TabPage("Settings");
+            tabs.TabPages.Add(page);
+
             page.Controls.Add(new Label { Left = 20, Top = 28, Width = 180, Text = "New design threshold %" });
-            thresholdBox = new TextBox { Left = 210, Top = 24, Width = 80, Text = "35" }; page.Controls.Add(thresholdBox);
-            page.Controls.Add(new Label { Left = 20, Top = 65, Width = 800, Text = "Increase threshold for stricter matches. Lower threshold finds more similar/partial matches." });
+
+            thresholdBox = new TextBox { Left = 210, Top = 24, Width = 80, Text = "35" };
+            page.Controls.Add(thresholdBox);
+
+            page.Controls.Add(new Label
+            {
+                Left = 20,
+                Top = 65,
+                Width = 850,
+                Text = "Increase threshold for stricter matches. Lower threshold finds more similar/partial matches."
+            });
         }
+
         private void PickImage()
         {
-            using (var ofd = new OpenFileDialog { Filter = "Images|*.jpg;*.jpeg;*.png;*.bmp" }) if (ofd.ShowDialog(this) == DialogResult.OK) { imagePath.Text = ofd.FileName; preview.ImageLocation = ofd.FileName; }
+            using (var ofd = new OpenFileDialog { Filter = "Images|*.jpg;*.jpeg;*.png;*.bmp" })
+            {
+                if (ofd.ShowDialog(this) == DialogResult.OK)
+                {
+                    imagePath.Text = ofd.FileName;
+                    preview.ImageLocation = ofd.FileName;
+                }
+            }
         }
+
         private void SearchImage()
         {
-            if (!File.Exists(imagePath.Text)) { MessageBox.Show("Select a valid image."); return; }
-            status.Text = "Searching..."; Application.DoEvents();
-            var matcher = new ImageMatcher(); var query = matcher.ExtractDescriptorBytes(imagePath.Text); var results = new List<MatchResult>();
+            if (!File.Exists(imagePath.Text))
+            {
+                MessageBox.Show("Select a valid image.");
+                return;
+            }
+
+            status.Text = "Searching...";
+            Application.DoEvents();
+
+            double threshold;
+            if (!double.TryParse(thresholdBox.Text, out threshold))
+                threshold = 35;
+
+            var matcher = new ImageMatcher();
+            var query = matcher.ExtractDescriptorBytes(imagePath.Text);
+            var results = new List<MatchResult>();
+
             using (var db = new Database(DbPath))
             {
                 foreach (var d in db.LoadDesigns())
                 {
                     var score = matcher.Compare(query, d.Descriptor);
-                    if (score > 1) results.Add(new MatchResult { MatchPercent = Math.Round(score, 2), CdrFileName = d.FileName, FullFolderPath = d.FolderPath, CdrPath = d.CdrPath, PageNumber = d.PageNumber, ObjectNumber = d.ObjectNumber, ThumbnailPath = d.ThumbnailPath });
+
+                    if (score > 1)
+                    {
+                        results.Add(new MatchResult
+                        {
+                            MatchPercent = Math.Round(score, 2),
+                            CdrFileName = d.FileName,
+                            FullFolderPath = d.FolderPath,
+                            CdrPath = d.CdrPath,
+                            PageNumber = d.PageNumber,
+                            DesignNumber = d.DesignNumber,
+                            ObjectNumber = d.DesignNumber,
+                            ThumbnailPath = d.ThumbnailPath,
+                            PngPath = d.PngPath,
+                            ExportMode = d.ExportMode,
+                            ShapeCount = d.ShapeCount
+                        });
+                    }
                 }
             }
-            var top = results.OrderByDescending(x => x.MatchPercent).Take(50).ToList(); grid.DataSource = top;
-            double threshold; if (!double.TryParse(thresholdBox.Text, out threshold)) threshold = 35;
-            status.Text = top.Count == 0 || top[0].MatchPercent < threshold ? "NEW DESIGN REQUIRED" : "Best match: " + top[0].MatchPercent + "%";
+
+            var top = results
+                .OrderByDescending(x => x.MatchPercent)
+                .Take(50)
+                .ToList();
+
+            grid.DataSource = top;
+
+            if (top.Count == 0)
+            {
+                status.Text = "NEW DESIGN REQUIRED - no indexed match found";
+            }
+            else if (top[0].MatchPercent < threshold)
+            {
+                status.Text = "NEW DESIGN REQUIRED - best only " + top[0].MatchPercent + "%";
+            }
+            else
+            {
+                status.Text = "Best match: " + top[0].MatchPercent + "% | " + top[0].CdrFileName + " | Page " + top[0].PageNumber + " | Design " + top[0].DesignNumber;
+            }
         }
+
         private async void StartScan(bool full)
         {
-            if (!Directory.Exists(scanRoot.Text)) { MessageBox.Show("Scan folder not found."); return; }
-            cts = new CancellationTokenSource(); var indexer = new Indexer(DbPath, CachePath);
-            var progress = new Progress<IndexProgress>(p => status.Text = p.CurrentFile + "/" + p.TotalFiles + " " + p.Message);
-            try { await indexer.RunAsync(scanRoot.Text, full, progress, cts.Token); status.Text = "Indexing complete"; }
-            catch (OperationCanceledException) { status.Text = "Indexing cancelled"; }
-            catch (Exception ex) { status.Text = "Indexing error"; MessageBox.Show(ex.Message); }
+            if (!Directory.Exists(scanRoot.Text))
+            {
+                MessageBox.Show("Scan folder not found.");
+                return;
+            }
+
+            cts = new CancellationTokenSource();
+            var indexer = new Indexer(DbPath, CachePath);
+
+            var progress = new Progress<IndexProgress>(p =>
+            {
+                status.Text = p.CurrentFile + "/" + p.TotalFiles + " " + p.Message;
+            });
+
+            try
+            {
+                status.Text = full ? "Full rescan started..." : "Incremental scan started...";
+                await indexer.RunAsync(scanRoot.Text, full, progress, cts.Token);
+                status.Text = "Indexing complete";
+            }
+            catch (OperationCanceledException)
+            {
+                status.Text = "Indexing cancelled";
+            }
+            catch (Exception ex)
+            {
+                status.Text = "Indexing error";
+                MessageBox.Show(ex.ToString());
+            }
         }
+
         private void OnGridSelectionChanged(object sender, EventArgs e)
         {
             var item = grid.CurrentRow == null ? null : grid.CurrentRow.DataBoundItem as MatchResult;
-            if (item != null && File.Exists(item.ThumbnailPath)) preview.ImageLocation = item.ThumbnailPath;
+
+            if (item != null)
+            {
+                string img = item.PngPath;
+
+                if (string.IsNullOrEmpty(img))
+                    img = item.ThumbnailPath;
+
+                if (File.Exists(img))
+                    preview.ImageLocation = img;
+            }
         }
+
         private void OnGridDoubleClick(object sender, EventArgs e)
         {
-            var item = grid.CurrentRow == null ? null : grid.CurrentRow.DataBoundItem as MatchResult; if (item == null) return;
-            var choice = MessageBox.Show("Yes = Open CDR\nNo = Open Folder", "Open", MessageBoxButtons.YesNoCancel);
-            if (choice == DialogResult.Yes) Process.Start(item.CdrPath); else if (choice == DialogResult.No) Process.Start(item.FullFolderPath);
+            var item = grid.CurrentRow == null ? null : grid.CurrentRow.DataBoundItem as MatchResult;
+            if (item == null)
+                return;
+
+            var choice = MessageBox.Show(
+                "Yes = Open CDR\nNo = Open Folder",
+                "Open",
+                MessageBoxButtons.YesNoCancel
+            );
+
+            if (choice == DialogResult.Yes && File.Exists(item.CdrPath))
+                Process.Start(item.CdrPath);
+            else if (choice == DialogResult.No && Directory.Exists(item.FullFolderPath))
+                Process.Start(item.FullFolderPath);
         }
-        private void OnDragEnter(object sender, DragEventArgs e) { if (e.Data.GetDataPresent(DataFormats.FileDrop)) e.Effect = DragDropEffects.Copy; }
-        private void OnDragDrop(object sender, DragEventArgs e) { var files = (string[])e.Data.GetData(DataFormats.FileDrop); if (files.Length > 0) { imagePath.Text = files[0]; preview.ImageLocation = files[0]; tabs.SelectedIndex = 0; } }
+
+        private void OnDragEnter(object sender, DragEventArgs e)
+        {
+            if (e.Data.GetDataPresent(DataFormats.FileDrop))
+                e.Effect = DragDropEffects.Copy;
+        }
+
+        private void OnDragDrop(object sender, DragEventArgs e)
+        {
+            var files = (string[])e.Data.GetData(DataFormats.FileDrop);
+
+            if (files.Length > 0)
+            {
+                imagePath.Text = files[0];
+                preview.ImageLocation = files[0];
+                tabs.SelectedIndex = 0;
+            }
+        }
     }
 }
