@@ -7,6 +7,8 @@ namespace CDRPhotoMatchPro.Imaging
 {
     public sealed class ImageMatcher
     {
+        private const int N = 64;
+
         public byte[] ExtractDescriptorBytes(string imagePath)
         {
             if (!File.Exists(imagePath))
@@ -14,24 +16,19 @@ namespace CDRPhotoMatchPro.Imaging
 
             using (var original = new Bitmap(imagePath))
             using (var cropped = CropImportantArea(original))
-            using (var small = new Bitmap(64, 64))
-            using (var g = Graphics.FromImage(small))
+            using (var normalized = NormalizeToSquare(cropped, N))
             {
-                g.Clear(Color.White);
-                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                g.DrawImage(cropped, 0, 0, 64, 64);
+                byte[] data = new byte[N * N];
 
-                byte[] data = new byte[64 * 64];
-
-                for (int y = 0; y < 64; y++)
+                for (int y = 0; y < N; y++)
                 {
-                    for (int x = 0; x < 64; x++)
+                    for (int x = 0; x < N; x++)
                     {
-                        Color c = small.GetPixel(x, y);
+                        Color c = normalized.GetPixel(x, y);
                         int gray = (c.R + c.G + c.B) / 3;
 
-                        // foreground ko strong karo
-                        data[y * 64 + x] = (byte)(gray < 180 ? 0 : 255);
+                        // WhatsApp/photo blur ke liye thoda soft threshold.
+                        data[y * N + x] = (byte)(gray < 200 ? 0 : 255);
                     }
                 }
 
@@ -44,19 +41,38 @@ namespace CDRPhotoMatchPro.Imaging
             if (queryDescriptor == null || indexedDescriptor == null)
                 return 0;
 
-            if (queryDescriptor.Length == 0 || indexedDescriptor.Length == 0)
+            if (queryDescriptor.Length != N * N || indexedDescriptor.Length != N * N)
                 return 0;
 
-            int len = Math.Min(queryDescriptor.Length, indexedDescriptor.Length);
+            double best = 0;
 
+            best = Math.Max(best, CompareSame(queryDescriptor, indexedDescriptor));
+            best = Math.Max(best, CompareSame(Rotate90(queryDescriptor), indexedDescriptor));
+            best = Math.Max(best, CompareSame(Rotate180(queryDescriptor), indexedDescriptor));
+            best = Math.Max(best, CompareSame(Rotate270(queryDescriptor), indexedDescriptor));
+
+            if (best < 0) best = 0;
+            if (best > 100) best = 100;
+
+            return best;
+        }
+
+        public Size ReadSize(string imagePath)
+        {
+            using (var img = Image.FromFile(imagePath))
+                return img.Size;
+        }
+
+        private double CompareSame(byte[] q, byte[] d)
+        {
             int sameDark = 0;
             int queryDark = 0;
             int indexedDark = 0;
 
-            for (int i = 0; i < len; i++)
+            for (int i = 0; i < q.Length; i++)
             {
-                bool qDark = queryDescriptor[i] < 128;
-                bool dDark = indexedDescriptor[i] < 128;
+                bool qDark = q[i] < 128;
+                bool dDark = d[i] < 128;
 
                 if (qDark) queryDark++;
                 if (dDark) indexedDark++;
@@ -66,21 +82,38 @@ namespace CDRPhotoMatchPro.Imaging
             if (queryDark == 0 || indexedDark == 0)
                 return 0;
 
-            double score1 = sameDark * 100.0 / queryDark;
-            double score2 = sameDark * 100.0 / indexedDark;
+            double a = sameDark * 100.0 / queryDark;
+            double b = sameDark * 100.0 / indexedDark;
 
-            double score = (score1 + score2) / 2.0;
-
-            if (score < 0) score = 0;
-            if (score > 100) score = 100;
-
-            return score;
+            return (a + b) / 2.0;
         }
 
-        public Size ReadSize(string imagePath)
+        private Bitmap NormalizeToSquare(Bitmap src, int size)
         {
-            using (var img = Image.FromFile(imagePath))
-                return img.Size;
+            Bitmap dst = new Bitmap(size, size);
+
+            using (Graphics g = Graphics.FromImage(dst))
+            {
+                g.Clear(Color.White);
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.SmoothingMode = SmoothingMode.HighQuality;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+
+                double scale = Math.Min(
+                    (size - 4) / (double)src.Width,
+                    (size - 4) / (double)src.Height
+                );
+
+                int w = Math.Max(1, (int)Math.Round(src.Width * scale));
+                int h = Math.Max(1, (int)Math.Round(src.Height * scale));
+
+                int x = (size - w) / 2;
+                int y = (size - h) / 2;
+
+                g.DrawImage(src, x, y, w, h);
+            }
+
+            return dst;
         }
 
         private Bitmap CropImportantArea(Bitmap src)
@@ -97,8 +130,8 @@ namespace CDRPhotoMatchPro.Imaging
                     Color c = src.GetPixel(x, y);
                     int gray = (c.R + c.G + c.B) / 3;
 
-                    // dark design area detect
-                    if (gray < 190)
+                    // Background white/light hota hai, design dark hoti hai.
+                    if (gray < 220)
                     {
                         if (x < minX) minX = x;
                         if (y < minY) minY = y;
@@ -111,14 +144,53 @@ namespace CDRPhotoMatchPro.Imaging
             if (maxX <= minX || maxY <= minY)
                 return new Bitmap(src);
 
-            int pad = 20;
+            int pad = 12;
+
             minX = Math.Max(0, minX - pad);
             minY = Math.Max(0, minY - pad);
             maxX = Math.Min(src.Width - 1, maxX + pad);
             maxY = Math.Min(src.Height - 1, maxY + pad);
 
-            Rectangle rect = new Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1);
+            Rectangle rect = new Rectangle(
+                minX,
+                minY,
+                maxX - minX + 1,
+                maxY - minY + 1
+            );
+
             return src.Clone(rect, src.PixelFormat);
+        }
+
+        private byte[] Rotate90(byte[] src)
+        {
+            byte[] dst = new byte[N * N];
+
+            for (int y = 0; y < N; y++)
+                for (int x = 0; x < N; x++)
+                    dst[x * N + (N - 1 - y)] = src[y * N + x];
+
+            return dst;
+        }
+
+        private byte[] Rotate180(byte[] src)
+        {
+            byte[] dst = new byte[N * N];
+
+            for (int i = 0; i < src.Length; i++)
+                dst[src.Length - 1 - i] = src[i];
+
+            return dst;
+        }
+
+        private byte[] Rotate270(byte[] src)
+        {
+            byte[] dst = new byte[N * N];
+
+            for (int y = 0; y < N; y++)
+                for (int x = 0; x < N; x++)
+                    dst[(N - 1 - x) * N + y] = src[y * N + x];
+
+            return dst;
         }
     }
 }
