@@ -50,11 +50,9 @@ namespace CDRPhotoMatchPro.Core
 
                     for (int s = 1; s <= shapeCount; s++)
                     {
-                        dynamic shape = null;
-
                         try
                         {
-                            shape = page.Shapes[s];
+                            dynamic shape = page.Shapes[s];
 
                             double w = SafeDouble(shape.SizeWidth);
                             double h = SafeDouble(shape.SizeHeight);
@@ -65,12 +63,12 @@ namespace CDRPhotoMatchPro.Core
                             double big = Math.Max(w, h);
                             double small = Math.Min(w, h);
 
-                            // Bahut chhote stone/dot/line ignore
-                            if (big < 8 || small < 2)
+                            // Sirf bilkul zero/super tiny object ignore
+                            if (big < 1 || small < 1)
                                 continue;
 
-                            // Bahut patli strip/line ignore
-                            if (big / small > 8)
+                            // Bahut patli line ignore, lekin design pieces allow
+                            if (small > 0 && (big / small) > 50)
                                 continue;
 
                             string outFile = Path.Combine(
@@ -94,7 +92,9 @@ namespace CDRPhotoMatchPro.Core
                                 });
                             }
                         }
-                        catch { }
+                        catch
+                        {
+                        }
                     }
                 }
             }
