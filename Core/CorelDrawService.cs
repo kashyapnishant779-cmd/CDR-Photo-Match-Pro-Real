@@ -46,33 +46,55 @@ namespace CDRPhotoMatchPro.Core
                     page.Activate();
 
                     int shapeCount = 0;
-                    try { shapeCount = Convert.ToInt32(page.Shapes.Count); } catch { shapeCount = 0; }
-
-                    if (shapeCount <= 0)
-                        continue;
+                    try { shapeCount = Convert.ToInt32(page.Shapes.Count); } catch { }
 
                     for (int s = 1; s <= shapeCount; s++)
                     {
-                        string outFile = Path.Combine(
-                            cacheRoot,
-                            Path.GetFileNameWithoutExtension(cdrPath) + "_p" + p + "_o" + s + ".jpg"
-                        );
+                        dynamic shape = null;
 
-                        bool ok = ExportShapeByClipboard(page, s, outFile);
-
-                        if (ok && File.Exists(outFile))
+                        try
                         {
-                            results.Add(new DesignRecord
+                            shape = page.Shapes[s];
+
+                            double w = SafeDouble(shape.SizeWidth);
+                            double h = SafeDouble(shape.SizeHeight);
+
+                            if (w <= 0 || h <= 0)
+                                continue;
+
+                            double big = Math.Max(w, h);
+                            double small = Math.Min(w, h);
+
+                            // Bahut chhote stone/dot/line ignore
+                            if (big < 8 || small < 2)
+                                continue;
+
+                            // Bahut patli strip/line ignore
+                            if (big / small > 8)
+                                continue;
+
+                            string outFile = Path.Combine(
+                                cacheRoot,
+                                Path.GetFileNameWithoutExtension(cdrPath) + "_p" + p + "_o" + s + ".jpg"
+                            );
+
+                            bool ok = ExportShapeByClipboard(shape, outFile);
+
+                            if (ok && File.Exists(outFile))
                             {
-                                CdrPath = cdrPath,
-                                FileName = fileName,
-                                FolderPath = folderPath,
-                                PageNumber = p,
-                                ObjectNumber = s,
-                                ThumbnailPath = outFile,
-                                PngPath = outFile
-                            });
+                                results.Add(new DesignRecord
+                                {
+                                    CdrPath = cdrPath,
+                                    FileName = fileName,
+                                    FolderPath = folderPath,
+                                    PageNumber = p,
+                                    ObjectNumber = s,
+                                    ThumbnailPath = outFile,
+                                    PngPath = outFile
+                                });
+                            }
                         }
+                        catch { }
                     }
                 }
             }
@@ -88,7 +110,7 @@ namespace CDRPhotoMatchPro.Core
             return results;
         }
 
-        private bool ExportShapeByClipboard(dynamic page, int shapeIndex, string outFile)
+        private bool ExportShapeByClipboard(dynamic shape, string outFile)
         {
             bool success = false;
             Exception error = null;
@@ -99,13 +121,7 @@ namespace CDRPhotoMatchPro.Core
                 {
                     Clipboard.Clear();
 
-                    dynamic shape = page.Shapes[shapeIndex];
-
-                    try
-                    {
-                        _app.ActiveDocument.ClearSelection();
-                    }
-                    catch { }
+                    try { _app.ActiveDocument.ClearSelection(); } catch { }
 
                     shape.CreateSelection();
 
@@ -151,6 +167,12 @@ namespace CDRPhotoMatchPro.Core
                 MessageBox.Show("Shape export error:\n\n" + error.ToString());
 
             return success;
+        }
+
+        private double SafeDouble(object value)
+        {
+            try { return Convert.ToDouble(value); }
+            catch { return 0; }
         }
 
         public void Dispose()
