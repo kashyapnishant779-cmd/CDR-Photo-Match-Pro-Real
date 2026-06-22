@@ -250,83 +250,31 @@ namespace CDRPhotoMatchPro.Core
                 return false;
             }
         }
+    private bool ExportSelectionNative(dynamic doc, string outFile)
+{
+    try
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(outFile));
 
-        private bool ExportSelectionNative(dynamic doc, string outFile)
+        dynamic exportFilter = doc.Export(
+            outFile,
+            774,
+            1
+        );
+
+        try
         {
-            try
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(outFile));
-
-                dynamic filter = doc.ExportBitmap(
-                    outFile,
-                    774,
-                    1,
-                    2,
-                    1200,
-                    1200,
-                    150,
-                    150,
-                    1,
-                    false,
-                    true,
-                    true,
-                    false
-                );
-
-                try { filter.Finish(); } catch { }
-
-                return File.Exists(outFile) && new FileInfo(outFile).Length > 1000;
-            }
-            catch
-            {
-                return false;
-            }
+            exportFilter.Finish();
+        }
+        catch
+        {
         }
 
-        private bool SaveClipboardImage(string outFile)
-        {
-            for (int i = 0; i < 40; i++)
-            {
-                Application.DoEvents();
-                Thread.Sleep(150);
-
-                if (!Clipboard.ContainsImage())
-                    continue;
-
-                using (Image img = Clipboard.GetImage())
-                {
-                    if (img == null)
-                        continue;
-
-                    using (Bitmap bmp = new Bitmap(img))
-                    {
-                        bmp.Save(outFile, ImageFormat.Jpeg);
-                    }
-
-                    return File.Exists(outFile) && new FileInfo(outFile).Length > 1000;
-                }
-            }
-
-            return false;
-        }
-
-        private static string SafeName(string s)
-        {
-            foreach (char c in Path.GetInvalidFileNameChars())
-                s = s.Replace(c, '_');
-
-            return s;
-        }
-
-        private double SafeDouble(object value)
-        {
-            try { return Convert.ToDouble(value); }
-            catch { return 0; }
-        }
-
-        public void Dispose()
-        {
-            try { _app = null; } catch { }
-        }
+        return File.Exists(outFile) &&
+               new FileInfo(outFile).Length > 1000;
+    }
+    catch
+    {
+        return false;
     }
 }
