@@ -63,12 +63,10 @@ namespace CDRPhotoMatchPro.Core
                             double big = Math.Max(w, h);
                             double small = Math.Min(w, h);
 
-                            // Sirf bilkul zero/super tiny object ignore
                             if (big < 1 || small < 1)
                                 continue;
 
-                            // Bahut patli line ignore, lekin design pieces allow
-                            if (small > 0 && (big / small) > 50)
+                            if (small > 0 && (big / small) > 80)
                                 continue;
 
                             string outFile = Path.Combine(
@@ -92,9 +90,7 @@ namespace CDRPhotoMatchPro.Core
                                 });
                             }
                         }
-                        catch
-                        {
-                        }
+                        catch { }
                     }
                 }
             }
@@ -112,61 +108,40 @@ namespace CDRPhotoMatchPro.Core
 
         private bool ExportShapeByClipboard(dynamic shape, string outFile)
         {
-            bool success = false;
-            Exception error = null;
-
-            Thread t = new Thread(() =>
+            try
             {
-                try
+                Clipboard.Clear();
+
+                try { _app.ActiveDocument.ClearSelection(); } catch { }
+
+                shape.CreateSelection();
+
+                Application.DoEvents();
+                Thread.Sleep(150);
+
+                SendKeys.SendWait("^c");
+
+                for (int i = 0; i < 30; i++)
                 {
-                    Clipboard.Clear();
+                    Application.DoEvents();
+                    Thread.Sleep(200);
 
-                    try { _app.ActiveDocument.ClearSelection(); } catch { }
-
-                    shape.CreateSelection();
-
-                    try
+                    if (Clipboard.ContainsImage())
                     {
-                        _app.ActiveSelection.Copy();
-                    }
-                    catch
-                    {
-                        SendKeys.SendWait("^c");
-                    }
-
-                    for (int i = 0; i < 20; i++)
-                    {
-                        Application.DoEvents();
-                        Thread.Sleep(250);
-
-                        if (Clipboard.ContainsImage())
+                        using (Image img = Clipboard.GetImage())
                         {
-                            using (Image img = Clipboard.GetImage())
+                            if (img != null)
                             {
-                                if (img != null)
-                                {
-                                    img.Save(outFile, ImageFormat.Jpeg);
-                                    success = File.Exists(outFile);
-                                    return;
-                                }
+                                img.Save(outFile, ImageFormat.Jpeg);
+                                return File.Exists(outFile);
                             }
                         }
                     }
                 }
-                catch (Exception ex)
-                {
-                    error = ex;
-                }
-            });
+            }
+            catch { }
 
-            t.SetApartmentState(ApartmentState.STA);
-            t.Start();
-            t.Join();
-
-            if (!success && error != null)
-                MessageBox.Show("Shape export error:\n\n" + error.ToString());
-
-            return success;
+            return false;
         }
 
         private double SafeDouble(object value)
