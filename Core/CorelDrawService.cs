@@ -56,7 +56,6 @@ namespace CDRPhotoMatchPro.Core
 
                     List<ShapeBox> shapes = GetUsableShapes(page);
 
-                    // Debug: ab pata chalega Corel X4 shapes read kar raha hai ya nahi.
                     MessageBox.Show(
                         "CDR: " + fileName + "\n" +
                         "Page: " + p + "\n" +
@@ -65,9 +64,6 @@ namespace CDRPhotoMatchPro.Core
 
                     int exportedOnPage = 0;
 
-                    // Pehle simple aur reliable test:
-                    // har usable shape ko export try karo.
-                    // Isse confirm hoga Corel export chal raha hai ya nahi.
                     for (int i = 0; i < shapes.Count; i++)
                     {
                         int designNo = i + 1;
@@ -95,7 +91,6 @@ namespace CDRPhotoMatchPro.Core
                         }
                     }
 
-                    // Agar single shape export bhi fail ho, to full page export try karo.
                     if (exportedOnPage == 0)
                     {
                         string outFile = Path.Combine(cacheRoot, baseName + "_p" + p + "_page.jpg");
@@ -250,31 +245,75 @@ namespace CDRPhotoMatchPro.Core
                 return false;
             }
         }
-    private bool ExportSelectionNative(dynamic doc, string outFile)
-{
-    try
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(outFile));
 
-        dynamic exportFilter = doc.Export(
-            outFile,
-            774,
-            1
-        );
-
-        try
+        private bool ExportSelectionNative(dynamic doc, string outFile)
         {
-            exportFilter.Finish();
-        }
-        catch
-        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(outFile));
+
+                dynamic exportFilter = doc.Export(
+                    outFile,
+                    774,
+                    1
+                );
+
+                try { exportFilter.Finish(); } catch { }
+
+                return File.Exists(outFile) &&
+                       new FileInfo(outFile).Length > 1000;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
-        return File.Exists(outFile) &&
-               new FileInfo(outFile).Length > 1000;
-    }
-    catch
-    {
-        return false;
+        private bool SaveClipboardImage(string outFile)
+        {
+            for (int i = 0; i < 40; i++)
+            {
+                Application.DoEvents();
+                Thread.Sleep(150);
+
+                if (!Clipboard.ContainsImage())
+                    continue;
+
+                using (Image img = Clipboard.GetImage())
+                {
+                    if (img == null)
+                        continue;
+
+                    using (Bitmap bmp = new Bitmap(img))
+                    {
+                        bmp.Save(outFile, ImageFormat.Jpeg);
+                    }
+
+                    return File.Exists(outFile) &&
+                           new FileInfo(outFile).Length > 1000;
+                }
+            }
+
+            return false;
+        }
+
+        private static string SafeName(string s)
+        {
+            foreach (char c in Path.GetInvalidFileNameChars())
+                s = s.Replace(c, '_');
+
+            return s;
+        }
+
+        private double SafeDouble(object value)
+        {
+            try { return Convert.ToDouble(value); }
+            catch { return 0; }
+        }
+
+        public void Dispose()
+        {
+            try { _app = null; } catch { }
+        }
     }
 }
