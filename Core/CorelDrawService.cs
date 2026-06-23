@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -11,6 +12,7 @@ namespace CDRPhotoMatchPro.Core
     public sealed class CorelDrawService : IDisposable
     {
         private dynamic _app;
+        private string _debugLog;
 
         private sealed class ShapeBox
         {
@@ -37,6 +39,9 @@ namespace CDRPhotoMatchPro.Core
         {
             var results = new List<DesignRecord>();
             Directory.CreateDirectory(cacheRoot);
+
+            _debugLog = Path.Combine(cacheRoot, "export_debug.txt");
+            WriteLog("START: " + cdrPath);
 
             dynamic doc = null;
 
@@ -71,7 +76,7 @@ namespace CDRPhotoMatchPro.Core
 
                         bool ok = ExportOneShape(doc, shapes[i].Shape, outFile);
 
-                        if (ok && File.Exists(outFile))
+                        if (ok && IsValidImage(outFile))
                         {
                             results.Add(new DesignRecord
                             {
@@ -83,7 +88,7 @@ namespace CDRPhotoMatchPro.Core
                                 ObjectNumber = designNo,
                                 ThumbnailPath = outFile,
                                 PngPath = outFile,
-                                ExportMode = "x4-shape-export",
+                                ExportMode = "x4-debug-export",
                                 ShapeCount = 1
                             });
 
@@ -97,7 +102,7 @@ namespace CDRPhotoMatchPro.Core
 
                         bool ok = ExportWholePage(doc, page, outFile);
 
-                        if (ok && File.Exists(outFile))
+                        if (ok && IsValidImage(outFile))
                         {
                             results.Add(new DesignRecord
                             {
@@ -109,7 +114,7 @@ namespace CDRPhotoMatchPro.Core
                                 ObjectNumber = 1,
                                 ThumbnailPath = outFile,
                                 PngPath = outFile,
-                                ExportMode = "x4-page-export",
+                                ExportMode = "x4-page-debug-export",
                                 ShapeCount = shapes.Count
                             });
 
@@ -123,13 +128,15 @@ namespace CDRPhotoMatchPro.Core
                             "Export failed completely.\n\n" +
                             "CDR: " + cdrPath + "\n" +
                             "Page: " + p + "\n" +
-                            "Shapes detected: " + shapes.Count
+                            "Shapes detected: " + shapes.Count + "\n\n" +
+                            "Debug log:\n" + _debugLog
                         );
                     }
                 }
             }
             catch (Exception ex)
             {
+                WriteLog("OPEN/EXPORT ERROR: " + ex);
                 MessageBox.Show("CDR open/export error:\n\n" + ex);
             }
             finally
@@ -137,6 +144,7 @@ namespace CDRPhotoMatchPro.Core
                 try { if (doc != null) doc.Close(); } catch { }
             }
 
+            WriteLog("RESULTS: " + results.Count);
             return results;
         }
 
@@ -186,21 +194,23 @@ namespace CDRPhotoMatchPro.Core
         {
             try
             {
-                try { Clipboard.Clear(); } catch { }
                 ClearSelection(doc);
 
-                try { shape.CreateSelection(); } catch { return false; }
+                try { shape.CreateSelection(); }
+                catch (Exception ex)
+                {
+                    WriteLog("CreateSelection failed: " + ex.Message);
+                    return false;
+                }
 
                 Application.DoEvents();
-                Thread.Sleep(300);
+                Thread.Sleep(400);
 
-                if (ExportSelectionX4(doc, outFile))
-                    return true;
-
-                return CopySelectionToJpg(outFile);
+                return ExportSelectionAllMethods(doc, outFile);
             }
-            catch
+            catch (Exception ex)
             {
+                WriteLog("ExportOneShape failed: " + ex);
                 return false;
             }
         }
@@ -209,109 +219,76 @@ namespace CDRPhotoMatchPro.Core
         {
             try
             {
-                try { Clipboard.Clear(); } catch { }
                 ClearSelection(doc);
 
-                try { page.Shapes.All().CreateSelection(); } catch { return false; }
+                try { page.Shapes.All().CreateSelection(); }
+                catch (Exception ex)
+                {
+                    WriteLog("Page CreateSelection failed: " + ex.Message);
+                    return false;
+                }
 
                 Application.DoEvents();
-                Thread.Sleep(300);
+                Thread.Sleep(400);
 
-                if (ExportSelectionX4(doc, outFile))
-                    return true;
-
-                return CopySelectionToJpg(outFile);
+                return ExportSelectionAllMethods(doc, outFile);
             }
-            catch
+            catch (Exception ex)
             {
+                WriteLog("ExportWholePage failed: " + ex);
                 return false;
             }
         }
 
-        private void ClearSelection(dynamic doc)
-        {
-            try { doc.ClearSelection(); } catch { }
-            try { _app.ActiveDocument.ClearSelection(); } catch { }
-        }
-
-        private bool ExportSelectionX4(dynamic doc, string outFile)
+        private bool ExportSelectionAllMethods(dynamic doc, string outFile)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(outFile));
 
-            // X4 me selection range aksar doc.Export se better chalta hai.
-            if (TryActiveSelectionRangeExport(outFile)) return true;
-
-            // Export range 2 = selection try.
-            if (TryDocExportBitmap(doc, outFile, 2)) return true;
-            if (TryDocExport(doc, outFile, 2)) return true;
-
-            // Export range 1 fallback.
+            if (TryActiveSelectionRangeExportBitmap(outFile)) return true;
             if (TryDocExportBitmap(doc, outFile, 1)) return true;
+            if (TryDocExportBitmap(doc, outFile, 2)) return true;
             if (TryDocExport(doc, outFile, 1)) return true;
+            if (TryDocExport(doc, outFile, 2)) return true;
+            if (CopySelectionToJpg(outFile)) return true;
 
             return false;
         }
 
-        private bool TryActiveSelectionRangeExport(string outFile)
+        private bool TryActiveSelectionRangeExportBitmap(string outFile)
         {
             try
             {
                 dynamic sr = _app.ActiveSelectionRange;
-
-                dynamic filter = sr.ExportBitmap(
-                    outFile,
-                    774,
-                    2,
-                    2,
-                    1200,
-                    1200,
-                    150,
-                    150,
-                    1,
-                    false,
-                    true,
-                    true,
-                    false
-                );
-
+                dynamic filter = sr.ExportBitmap(outFile, 774);
                 try { filter.Finish(); } catch { }
 
-                return IsValidImage(outFile);
+                if (IsValidImage(outFile))
+                    return true;
             }
-            catch
+            catch (Exception ex)
             {
-                return false;
+                WriteLog("ActiveSelectionRange.ExportBitmap failed: " + ex.Message);
             }
+
+            return false;
         }
 
         private bool TryDocExportBitmap(dynamic doc, string outFile, int range)
         {
             try
             {
-                dynamic filter = doc.ExportBitmap(
-                    outFile,
-                    774,
-                    range,
-                    2,
-                    1200,
-                    1200,
-                    150,
-                    150,
-                    1,
-                    false,
-                    true,
-                    true,
-                    false
-                );
-
+                dynamic filter = doc.ExportBitmap(outFile, 774, range);
                 try { filter.Finish(); } catch { }
 
-                return IsValidImage(outFile);
+                if (IsValidImage(outFile))
+                    return true;
             }
-            catch
+            catch (Exception ex)
             {
-                return false;
+                WriteLog("doc.ExportBitmap range " + range + " failed: " + ex.Message);
             }
+
+            return false;
         }
 
         private bool TryDocExport(dynamic doc, string outFile, int range)
@@ -321,18 +298,23 @@ namespace CDRPhotoMatchPro.Core
                 dynamic filter = doc.Export(outFile, 774, range);
                 try { filter.Finish(); } catch { }
 
-                return IsValidImage(outFile);
+                if (IsValidImage(outFile))
+                    return true;
             }
-            catch
+            catch (Exception ex)
             {
-                return false;
+                WriteLog("doc.Export range " + range + " failed: " + ex.Message);
             }
+
+            return false;
         }
 
         private bool CopySelectionToJpg(string outFile)
         {
             try
             {
+                try { Clipboard.Clear(); } catch { }
+
                 try
                 {
                     dynamic sr = _app.ActiveSelectionRange;
@@ -344,41 +326,41 @@ namespace CDRPhotoMatchPro.Core
                 }
 
                 Application.DoEvents();
-                Thread.Sleep(600);
+                Thread.Sleep(700);
 
-                return SaveClipboardImage(outFile);
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        private bool SaveClipboardImage(string outFile)
-        {
-            for (int i = 0; i < 50; i++)
-            {
-                Application.DoEvents();
-                Thread.Sleep(150);
-
-                if (!Clipboard.ContainsImage())
-                    continue;
-
-                using (Image img = Clipboard.GetImage())
+                for (int i = 0; i < 50; i++)
                 {
-                    if (img == null)
+                    Application.DoEvents();
+                    Thread.Sleep(150);
+
+                    if (!Clipboard.ContainsImage())
                         continue;
 
-                    using (Bitmap bmp = new Bitmap(img))
+                    using (Image img = Clipboard.GetImage())
                     {
-                        bmp.Save(outFile, ImageFormat.Jpeg);
-                    }
+                        if (img == null)
+                            continue;
 
-                    return IsValidImage(outFile);
+                        using (Bitmap bmp = new Bitmap(img))
+                            bmp.Save(outFile, ImageFormat.Jpeg);
+
+                        if (IsValidImage(outFile))
+                            return true;
+                    }
                 }
+            }
+            catch (Exception ex)
+            {
+                WriteLog("CopySelectionToJpg failed: " + ex.Message);
             }
 
             return false;
+        }
+
+        private void ClearSelection(dynamic doc)
+        {
+            try { doc.ClearSelection(); } catch { }
+            try { _app.ActiveDocument.ClearSelection(); } catch { }
         }
 
         private bool IsValidImage(string path)
@@ -391,6 +373,15 @@ namespace CDRPhotoMatchPro.Core
             {
                 return false;
             }
+        }
+
+        private void WriteLog(string text)
+        {
+            try
+            {
+                File.AppendAllText(_debugLog, DateTime.Now.ToString("HH:mm:ss") + " | " + text + Environment.NewLine, Encoding.UTF8);
+            }
+            catch { }
         }
 
         private static string SafeName(string s)
