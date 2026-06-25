@@ -22,18 +22,59 @@ namespace CDRPhotoMatchPro.Core
             public dynamic Shape;
         }
 
-        public CorelDrawService()
+       public CorelDrawService()
+{
+    Type type = Type.GetTypeFromProgID("CorelDRAW.Application.14");
+
+    if (type == null)
+        type = Type.GetTypeFromProgID("CorelDRAW.Application");
+
+    if (type == null)
+        throw new InvalidOperationException("CorelDRAW X4 COM not found.");
+
+    Exception lastError = null;
+
+    for (int i = 1; i <= 5; i++)
+    {
+        try
         {
-            var type =
-                Type.GetTypeFromProgID("CorelDRAW.Application.14") ??
-                Type.GetTypeFromProgID("CorelDRAW.Application");
-
-            if (type == null)
-                throw new InvalidOperationException("CorelDRAW COM not found.");
-
             _app = Activator.CreateInstance(type);
-            _app.Visible = true;
+
+            Thread.Sleep(3000);
+
+            try
+            {
+                _app.Visible = true;
+            }
+            catch { }
+
+            // COM connection test
+            string version = Convert.ToString(_app.Version);
+
+            WriteLog("CorelDRAW Version : " + version);
+            WriteLog("COM Connected Successfully");
+
+            return;
         }
+        catch (Exception ex)
+        {
+            lastError = ex;
+            WriteLog("CreateInstance Try " + i + " Failed : " + ex);
+
+            try
+            {
+                _app = null;
+            }
+            catch { }
+
+            Thread.Sleep(3000);
+        }
+    }
+
+    throw new InvalidOperationException(
+        "CorelDRAW COM start failed after 5 attempts.",
+        lastError);
+} 
 
         public IEnumerable<DesignRecord> ExportDesigns(string cdrPath, string cacheRoot)
         {
@@ -398,9 +439,21 @@ namespace CDRPhotoMatchPro.Core
             catch { return 0; }
         }
 
-        public void Dispose()
+       public void Dispose()
+{
+    try
+    {
+        if (_app != null)
         {
-            try { _app = null; } catch { }
+            try { _app.Quit(); } catch { }
         }
+    }
+    catch { }
+    finally
+    {
+        _app = null;
+    }
+}
+
     }
 }
