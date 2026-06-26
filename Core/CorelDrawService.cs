@@ -297,45 +297,37 @@ namespace CDRPhotoMatchPro.Core
 
 private bool TryX4Export(dynamic doc, string outFile, int range)
 {
-    try
+    int[] filters = new int[] { 774, 772, 769 }; // JPG, TIF, BMP test
+    int[] ranges = new int[] { range, 2, 1, 0 };
+
+    foreach (int f in filters)
     {
-        object[] args = new object[]
+        foreach (int r in ranges)
         {
-            outFile,
-            774,
-            range
-        };
+            try
+            {
+                WriteLog("TryX4Export start filter=" + f + " range=" + r);
 
-        object filter = doc.GetType().InvokeMember(
-            "Export",
-            System.Reflection.BindingFlags.InvokeMethod,
-            null,
-            doc,
-            args
-        );
+                object filter = doc.Export(outFile, f, r);
 
-        try
-        {
-            filter.GetType().InvokeMember(
-                "Finish",
-                System.Reflection.BindingFlags.InvokeMethod,
-                null,
-                filter,
-                new object[] { }
-            );
+                try { filter.Finish(); } catch { }
+
+                if (IsValidImage(outFile))
+                {
+                    WriteLog("TryX4Export SUCCESS filter=" + f + " range=" + r);
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                WriteLog("TryX4Export failed filter=" + f + " range=" + r + " error=" + ex);
+            }
         }
-        catch { }
-
-        if (IsValidImage(outFile))
-            return true;
-    }
-    catch (Exception ex)
-    {
-        WriteLog("TryX4Export range " + range + " failed: " + ex.Message);
     }
 
     return false;
 }
+
 
         private bool CopySelectionToJpg(string outFile)
 {
