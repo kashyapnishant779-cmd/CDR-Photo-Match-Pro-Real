@@ -297,7 +297,7 @@ namespace CDRPhotoMatchPro.Core
 
 private bool TryX4Export(dynamic doc, string outFile, int range)
 {
-    int[] filters = new int[] { 774, 772, 769 }; // JPG, TIF, BMP test
+    int[] filters = new int[] { 774, 772, 769 };
     int[] ranges = new int[] { range, 2, 1, 0 };
 
     foreach (int f in filters)
@@ -306,27 +306,60 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
         {
             try
             {
-                WriteLog("TryX4Export start filter=" + f + " range=" + r);
-
-                dynamic filter = doc.Export(outFile, f, r);
-
-                try { filter.Finish(); } catch { }
+                WriteLog("Export test A: file,filter,range f=" + f + " r=" + r);
+                dynamic exp = doc.Export(outFile, f, r);
+                try { exp.Finish(); } catch { }
 
                 if (IsValidImage(outFile))
                 {
-                    WriteLog("TryX4Export SUCCESS filter=" + f + " range=" + r);
+                    WriteLog("Export SUCCESS A");
                     return true;
                 }
             }
             catch (Exception ex)
             {
-                WriteLog("TryX4Export failed filter=" + f + " range=" + r + " error=" + ex);
+                WriteLog("Export A failed: " + ex.Message);
+            }
+
+            try
+            {
+                WriteLog("Export test B: filter,file,range f=" + f + " r=" + r);
+                dynamic exp = doc.Export(f, outFile, r);
+                try { exp.Finish(); } catch { }
+
+                if (IsValidImage(outFile))
+                {
+                    WriteLog("Export SUCCESS B");
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                WriteLog("Export B failed: " + ex.Message);
+            }
+
+            try
+            {
+                WriteLog("Export test C: file,range,filter f=" + f + " r=" + r);
+                dynamic exp = doc.Export(outFile, r, f);
+                try { exp.Finish(); } catch { }
+
+                if (IsValidImage(outFile))
+                {
+                    WriteLog("Export SUCCESS C");
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                WriteLog("Export C failed: " + ex.Message);
             }
         }
     }
 
     return false;
 }
+
 
 
         private bool CopySelectionToJpg(string outFile)
