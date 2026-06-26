@@ -308,7 +308,7 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
             {
                 WriteLog("TryX4Export start filter=" + f + " range=" + r);
 
-                object filter = doc.Export(outFile, f, r);
+                dynamic filter = doc.Export(outFile, f, r);
 
                 try { filter.Finish(); } catch { }
 
