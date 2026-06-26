@@ -282,73 +282,60 @@ namespace CDRPhotoMatchPro.Core
         }
 
         private bool ExportSelectionAllMethods(dynamic doc, string outFile)
+{
+    Directory.CreateDirectory(Path.GetDirectoryName(outFile));
+
+    // CorelDRAW X4 me pehle clipboard method try karo
+    if (CopySelectionToJpg(outFile)) return true;
+
+    // X4 late binding export tests
+    if (TryX4Export(doc, outFile, 2)) return true; // selection
+    if (TryX4Export(doc, outFile, 1)) return true; // current page
+
+    return false;
+}
+
+private bool TryX4Export(dynamic doc, string outFile, int range)
+{
+    try
+    {
+        object[] args = new object[]
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(outFile));
+            outFile,
+            774,
+            range
+        };
 
-            if (TryActiveSelectionRangeExportBitmap(outFile)) return true;
-            if (TryDocExportBitmap(doc, outFile, 1)) return true;
-            if (TryDocExportBitmap(doc, outFile, 2)) return true;
-            if (TryDocExport(doc, outFile, 1)) return true;
-            if (TryDocExport(doc, outFile, 2)) return true;
-            if (CopySelectionToJpg(outFile)) return true;
+        object filter = doc.GetType().InvokeMember(
+            "Export",
+            System.Reflection.BindingFlags.InvokeMethod,
+            null,
+            doc,
+            args
+        );
 
-            return false;
-        }
-
-        private bool TryActiveSelectionRangeExportBitmap(string outFile)
+        try
         {
-            try
-            {
-                dynamic sr = _app.ActiveSelectionRange;
-                dynamic filter = sr.ExportBitmap(outFile, 774);
-                try { filter.Finish(); } catch { }
-
-                if (IsValidImage(outFile))
-                    return true;
-            }
-            catch (Exception ex)
-            {
-                WriteLog("ActiveSelectionRange.ExportBitmap failed: " + ex.Message);
-            }
-
-            return false;
+            filter.GetType().InvokeMember(
+                "Finish",
+                System.Reflection.BindingFlags.InvokeMethod,
+                null,
+                filter,
+                new object[] { }
+            );
         }
+        catch { }
 
-        private bool TryDocExportBitmap(dynamic doc, string outFile, int range)
-        {
-            try
-            {
-                dynamic filter = doc.ExportBitmap(outFile, 774, range);
-                try { filter.Finish(); } catch { }
+        if (IsValidImage(outFile))
+            return true;
+    }
+    catch (Exception ex)
+    {
+        WriteLog("TryX4Export range " + range + " failed: " + ex.Message);
+    }
 
-                if (IsValidImage(outFile))
-                    return true;
-            }
-            catch (Exception ex)
-            {
-                WriteLog("doc.ExportBitmap range " + range + " failed: " + ex.Message);
-            }
-
-            return false;
-        }
-
-        private bool TryDocExport(dynamic doc, string outFile, int range)
-        {
-            try
-            {
-                dynamic filter = doc.Export(outFile, 774, range);
-                try { filter.Finish(); } catch { }
-
-                if (IsValidImage(outFile))
-                    return true;
-            }
-            catch (Exception ex)
-            {
-                WriteLog("doc.Export range " + range + " failed: " + ex.Message);
-            }
-
-            return false;
-        }
+    return false;
+}
 
         private bool CopySelectionToJpg(string outFile)
         {
