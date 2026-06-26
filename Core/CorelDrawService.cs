@@ -338,52 +338,78 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
 }
 
         private bool CopySelectionToJpg(string outFile)
+{
+    try
+    {
+        WriteLog("Clipboard export start");
+
+        try { Clipboard.Clear(); } catch { }
+
+        try { _app.ActiveWindow.Activate(); } catch { }
+
+        Application.DoEvents();
+        Thread.Sleep(500);
+
+        try
         {
-            try
+            SendKeys.SendWait("^c");
+            WriteLog("SendKeys Ctrl+C done");
+        }
+        catch (Exception ex)
+        {
+            WriteLog("SendKeys Ctrl+C failed: " + ex.Message);
+        }
+
+        Application.DoEvents();
+        Thread.Sleep(1500);
+
+        IDataObject data = Clipboard.GetDataObject();
+
+        if (data != null)
+        {
+            string[] formats = data.GetFormats();
+            WriteLog("Clipboard formats: " + string.Join(",", formats));
+        }
+        else
+        {
+            WriteLog("Clipboard data object is null");
+        }
+
+        for (int i = 0; i < 30; i++)
+        {
+            Application.DoEvents();
+            Thread.Sleep(200);
+
+            if (Clipboard.ContainsImage())
             {
-                try { Clipboard.Clear(); } catch { }
-
-                try
+                using (Image img = Clipboard.GetImage())
                 {
-                    dynamic sr = _app.ActiveSelectionRange;
-                    sr.Copy();
-                }
-                catch
-                {
-                    try { SendKeys.SendWait("^c"); } catch { }
-                }
-
-                Application.DoEvents();
-                Thread.Sleep(700);
-
-                for (int i = 0; i < 50; i++)
-                {
-                    Application.DoEvents();
-                    Thread.Sleep(150);
-
-                    if (!Clipboard.ContainsImage())
-                        continue;
-
-                    using (Image img = Clipboard.GetImage())
+                    if (img != null)
                     {
-                        if (img == null)
-                            continue;
-
                         using (Bitmap bmp = new Bitmap(img))
+                        {
                             bmp.Save(outFile, ImageFormat.Jpeg);
+                        }
+
+                        WriteLog("Clipboard image saved: " + outFile);
 
                         if (IsValidImage(outFile))
                             return true;
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                WriteLog("CopySelectionToJpg failed: " + ex.Message);
-            }
-
-            return false;
         }
+
+        WriteLog("Clipboard export failed: no bitmap image found");
+    }
+    catch (Exception ex)
+    {
+        WriteLog("CopySelectionToJpg failed: " + ex);
+    }
+
+    return false;
+}
+
 
         private void ClearSelection(dynamic doc)
         {
