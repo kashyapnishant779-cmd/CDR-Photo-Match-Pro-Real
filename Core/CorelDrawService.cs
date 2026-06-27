@@ -315,9 +315,12 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
         string tempFile = @"D:\TEST\x4_export_temp.jpg";
         try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { }
 
-        WriteLog("X4 ExportBitmap short path start: " + tempFile);
+        WriteLog("X4 CallByName ExportBitmap start: " + tempFile);
 
-        dynamic exp = doc.ExportBitmap(
+        object exp = Microsoft.VisualBasic.Interaction.CallByName(
+            doc,
+            "ExportBitmap",
+            Microsoft.VisualBasic.CallType.Method,
             tempFile,
             774,
             2,
@@ -328,7 +331,15 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
             96
         );
 
-        try { exp.Finish(); } catch { }
+        try
+        {
+            Microsoft.VisualBasic.Interaction.CallByName(
+                exp,
+                "Finish",
+                Microsoft.VisualBasic.CallType.Method
+            );
+        }
+        catch { }
 
         Application.DoEvents();
         Thread.Sleep(1000);
@@ -336,22 +347,22 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
         if (IsValidImage(tempFile))
         {
             File.Copy(tempFile, outFile, true);
-            WriteLog("X4 ExportBitmap short path SUCCESS copied to: " + outFile);
+            WriteLog("X4 CallByName ExportBitmap SUCCESS copied to: " + outFile);
             return true;
         }
 
-        WriteLog("X4 ExportBitmap short path image invalid");
+        WriteLog("X4 CallByName ExportBitmap image invalid");
     }
     catch (Exception ex)
     {
-        WriteLog("X4 ExportBitmap short path failed: " + ex);
+        WriteLog("X4 CallByName ExportBitmap failed: " + ex);
     }
 
     return false;
 }
 
-        
 
+    
         private bool CopySelectionToJpg(string outFile)
 {
     try
