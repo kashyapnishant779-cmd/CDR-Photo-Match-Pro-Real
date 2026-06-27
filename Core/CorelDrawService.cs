@@ -317,7 +317,7 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
 
         WriteLog("X4 ExportBitmap short path start: " + tempFile);
 
-        dynamic exp = _app.ActiveDocument.ExportBitmap(
+        dynamic exp = doc.ExportBitmap(
             tempFile,
             774,
             2,
