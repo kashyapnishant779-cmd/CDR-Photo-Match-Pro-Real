@@ -312,15 +312,16 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(outFile));
 
-        WriteLog("X4 ExportBitmap final start");
+        string tempFile = @"D:\TEST\x4_export_temp.jpg";
+        try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { }
 
-        dynamic activeDoc = _app.ActiveDocument;
+        WriteLog("X4 ExportBitmap short path start: " + tempFile);
 
-        dynamic exp = activeDoc.ExportBitmap(
-            outFile,
-            774,   // cdrJPEG
-            2,     // cdrSelection
-            4,     // cdrRGBColorImage
+        dynamic exp = _app.ActiveDocument.ExportBitmap(
+            tempFile,
+            774,
+            2,
+            4,
             1200,
             1200,
             96,
@@ -332,21 +333,23 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
         Application.DoEvents();
         Thread.Sleep(1000);
 
-        if (IsValidImage(outFile))
+        if (IsValidImage(tempFile))
         {
-            WriteLog("X4 ExportBitmap final SUCCESS: " + outFile);
+            File.Copy(tempFile, outFile, true);
+            WriteLog("X4 ExportBitmap short path SUCCESS copied to: " + outFile);
             return true;
         }
 
-        WriteLog("X4 ExportBitmap final image invalid");
+        WriteLog("X4 ExportBitmap short path image invalid");
     }
     catch (Exception ex)
     {
-        WriteLog("X4 ExportBitmap final failed: " + ex);
+        WriteLog("X4 ExportBitmap short path failed: " + ex);
     }
 
     return false;
 }
+
         
 
         private bool CopySelectionToJpg(string outFile)
