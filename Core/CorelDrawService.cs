@@ -4,6 +4,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Text;
+using Microsoft.VisualBasic;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -317,10 +318,10 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
 
         WriteLog("X4 CallByName ExportBitmap start: " + tempFile);
 
-        object exp = Microsoft.VisualBasic.Interaction.CallByName(
+        object exp =Interaction.CallByName(
             doc,
             "ExportBitmap",
-            Microsoft.VisualBasic.CallType.Method,
+            CallType.Method,
             tempFile,
             774,
             2,
@@ -333,10 +334,10 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
 
         try
         {
-            Microsoft.VisualBasic.Interaction.CallByName(
+            Interaction.CallByName(
                 exp,
                 "Finish",
-                Microsoft.VisualBasic.CallType.Method
+               CallType.Method
             );
         }
         catch { }
