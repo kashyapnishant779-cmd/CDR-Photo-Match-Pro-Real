@@ -280,16 +280,31 @@ namespace CDRPhotoMatchPro.Core
                 return false;
             }
         }
-
-        private bool ExportSelectionAllMethods(dynamic doc, string outFile)
+         private bool ExportSelectionAllMethods(dynamic doc, string outFile)
 {
     Directory.CreateDirectory(Path.GetDirectoryName(outFile));
 
-    // Temporary speed test:
-    // Sirf ek hi export attempt hoga.
+    try
+    {
+        dynamic sel = _app.ActiveSelection;
+        int selCount = 0;
+        try { selCount = Convert.ToInt32(sel.Shapes.Count); } catch { }
+
+        WriteLog("Selection check count=" + selCount);
+
+        if (selCount <= 0)
+        {
+            WriteLog("No active selection before export");
+            return false;
+        }
+    }
+    catch (Exception ex)
+    {
+        WriteLog("Selection check failed: " + ex);
+    }
+
     return TryX4Export(doc, outFile, 2);
 }
-
 
 private bool TryX4Export(dynamic doc, string outFile, int range)
 {
@@ -297,7 +312,7 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(outFile));
 
-        WriteLog("X4 ExportBitmap direct doc start");
+        WriteLog("X4 ExportBitmap final start");
 
         dynamic activeDoc = _app.ActiveDocument;
 
@@ -312,26 +327,27 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
             96
         );
 
-        exp.Finish();
+        try { exp.Finish(); } catch { }
+
+        Application.DoEvents();
+        Thread.Sleep(1000);
 
         if (IsValidImage(outFile))
         {
-            WriteLog("X4 ExportBitmap direct doc SUCCESS: " + outFile);
+            WriteLog("X4 ExportBitmap final SUCCESS: " + outFile);
             return true;
         }
 
-        WriteLog("X4 ExportBitmap direct doc image invalid");
+        WriteLog("X4 ExportBitmap final image invalid");
     }
     catch (Exception ex)
     {
-        WriteLog("X4 ExportBitmap direct doc failed: " + ex);
+        WriteLog("X4 ExportBitmap final failed: " + ex);
     }
 
     return false;
 }
-
-
-
+        
 
         private bool CopySelectionToJpg(string outFile)
 {
