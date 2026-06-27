@@ -299,16 +299,16 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
 
         WriteLog("X4 ExportBitmap working VBA-style start");
 
-        dynamic exp = _app.ActiveDocument.ExportBitmap(
-            outFile,
-            772,   // cdrJPEG
-            2,     // cdrSelection
-            2,     // cdrRGBColorImage
-            1200,
-            1200,
-            96,
-            96
-        );
+       dynamic exp = _app.ActiveDocument.ExportBitmap(
+    outFile,
+    774,   // cdrJPEG
+    2,     // cdrSelection
+    4,     // cdrRGBColorImage
+    1200,
+    1200,
+    96,
+    96
+);
 
         try { exp.Finish(); } catch { }
 
