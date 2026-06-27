@@ -297,32 +297,51 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(outFile));
 
-        WriteLog("X4 ExportBitmap working VBA-style start");
+        WriteLog("X4 ExportBitmap InvokeMember start");
 
-       dynamic exp = _app.ActiveDocument.ExportBitmap(
-    outFile,
-    774,   // cdrJPEG
-    2,     // cdrSelection
-    4,     // cdrRGBColorImage
-    1200,
-    1200,
-    96,
-    96
-);
+        object activeDoc = _app.ActiveDocument;
 
-        try { exp.Finish(); } catch { }
+        object exp = activeDoc.GetType().InvokeMember(
+            "ExportBitmap",
+            System.Reflection.BindingFlags.InvokeMethod,
+            null,
+            activeDoc,
+            new object[]
+            {
+                outFile,
+                774,   // cdrJPEG
+                2,     // cdrSelection
+                4,     // cdrRGBColorImage
+                1200,
+                1200,
+                96,
+                96
+            }
+        );
+
+        try
+        {
+            exp.GetType().InvokeMember(
+                "Finish",
+                System.Reflection.BindingFlags.InvokeMethod,
+                null,
+                exp,
+                null
+            );
+        }
+        catch { }
 
         if (IsValidImage(outFile))
         {
-            WriteLog("X4 ExportBitmap SUCCESS: " + outFile);
+            WriteLog("X4 ExportBitmap InvokeMember SUCCESS: " + outFile);
             return true;
         }
 
-        WriteLog("X4 ExportBitmap finished but image invalid");
+        WriteLog("X4 ExportBitmap InvokeMember image invalid");
     }
     catch (Exception ex)
     {
-        WriteLog("X4 ExportBitmap failed: " + ex);
+        WriteLog("X4 ExportBitmap InvokeMember failed: " + ex);
     }
 
     return false;
