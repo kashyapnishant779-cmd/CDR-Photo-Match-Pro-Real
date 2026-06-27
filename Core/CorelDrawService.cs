@@ -312,10 +312,15 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(outFile));
 
-        WriteLog("X4 ExportBitmap doc start");
+        string tempFile = @"D:\TEST\x4_export_test.jpg";
+        try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { }
 
-        dynamic exp = doc.ExportBitmap(
-            outFile,
+        WriteLog("X4 ActiveDocument ExportBitmap start");
+
+        dynamic activeDoc = _app.ActiveDocument;
+
+        dynamic exp = activeDoc.ExportBitmap(
+            tempFile,
             774,
             2,
             4,
@@ -328,15 +333,16 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
         try { exp.Finish(); } catch { }
 
         Application.DoEvents();
-        Thread.Sleep(1000);
+        Thread.Sleep(1500);
 
-        if (IsValidImage(outFile))
+        if (IsValidImage(tempFile))
         {
-            WriteLog("SUCCESS");
+            File.Copy(tempFile, outFile, true);
+            WriteLog("SUCCESS copied: " + outFile);
             return true;
         }
 
-        WriteLog("Image invalid");
+        WriteLog("Image invalid after export");
     }
     catch (Exception ex)
     {
@@ -345,6 +351,7 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
 
     return false;
 }
+
 
 
 
