@@ -293,64 +293,36 @@ namespace CDRPhotoMatchPro.Core
 
 private bool TryX4Export(dynamic doc, string outFile, int range)
 {
-    int[] filters = new int[] { 774, 772, 769 };
-    int[] ranges = new int[] { range, 2, 1, 0 };
-
-    foreach (int f in filters)
+    try
     {
-        foreach (int r in ranges)
+        Directory.CreateDirectory(Path.GetDirectoryName(outFile));
+
+        WriteLog("X4 ExportBitmap working VBA-style start");
+
+        dynamic exp = _app.ActiveDocument.ExportBitmap(
+            outFile,
+            772,   // cdrJPEG
+            2,     // cdrSelection
+            2,     // cdrRGBColorImage
+            1200,
+            1200,
+            96,
+            96
+        );
+
+        try { exp.Finish(); } catch { }
+
+        if (IsValidImage(outFile))
         {
-            try
-            {
-                WriteLog("Export test A: file,filter,range f=" + f + " r=" + r);
-                dynamic exp = doc.Export(outFile, f, r);
-                try { exp.Finish(); } catch { }
-
-                if (IsValidImage(outFile))
-                {
-                    WriteLog("Export SUCCESS A");
-                    return true;
-                }
-            }
-            catch (Exception ex)
-            {
-                WriteLog("Export A failed: " + ex.Message);
-            }
-
-            try
-            {
-                WriteLog("Export test B: filter,file,range f=" + f + " r=" + r);
-                dynamic exp = doc.Export(f, outFile, r);
-                try { exp.Finish(); } catch { }
-
-                if (IsValidImage(outFile))
-                {
-                    WriteLog("Export SUCCESS B");
-                    return true;
-                }
-            }
-            catch (Exception ex)
-            {
-                WriteLog("Export B failed: " + ex.Message);
-            }
-
-            try
-            {
-                WriteLog("Export test C: file,range,filter f=" + f + " r=" + r);
-                dynamic exp = doc.Export(outFile, r, f);
-                try { exp.Finish(); } catch { }
-
-                if (IsValidImage(outFile))
-                {
-                    WriteLog("Export SUCCESS C");
-                    return true;
-                }
-            }
-            catch (Exception ex)
-            {
-                WriteLog("Export C failed: " + ex.Message);
-            }
+            WriteLog("X4 ExportBitmap SUCCESS: " + outFile);
+            return true;
         }
+
+        WriteLog("X4 ExportBitmap finished but image invalid");
+    }
+    catch (Exception ex)
+    {
+        WriteLog("X4 ExportBitmap failed: " + ex);
     }
 
     return false;
