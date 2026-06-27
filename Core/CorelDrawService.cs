@@ -285,15 +285,11 @@ namespace CDRPhotoMatchPro.Core
 {
     Directory.CreateDirectory(Path.GetDirectoryName(outFile));
 
-    // CorelDRAW X4 me pehle clipboard method try karo
-    if (CopySelectionToJpg(outFile)) return true;
-
-    // X4 late binding export tests
-    if (TryX4Export(doc, outFile, 2)) return true; // selection
-    if (TryX4Export(doc, outFile, 1)) return true; // current page
-
-    return false;
+    // Temporary speed test:
+    // Sirf ek hi export attempt hoga.
+    return TryX4Export(doc, outFile, 2);
 }
+
 
 private bool TryX4Export(dynamic doc, string outFile, int range)
 {
