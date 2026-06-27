@@ -4,7 +4,6 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Text;
-using Microsoft.VisualBasic;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -313,16 +312,10 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(outFile));
 
-        string tempFile = @"D:\TEST\x4_export_temp.jpg";
-        try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { }
+        WriteLog("X4 ExportBitmap doc start");
 
-        WriteLog("X4 CallByName ExportBitmap start: " + tempFile);
-
-        object exp =Interaction.CallByName(
-            doc,
-            "ExportBitmap",
-            CallType.Method,
-            tempFile,
+        dynamic exp = doc.ExportBitmap(
+            outFile,
             774,
             2,
             4,
@@ -332,35 +325,27 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
             96
         );
 
-        try
-        {
-            Interaction.CallByName(
-                exp,
-                "Finish",
-               CallType.Method
-            );
-        }
-        catch { }
+        try { exp.Finish(); } catch { }
 
         Application.DoEvents();
         Thread.Sleep(1000);
 
-        if (IsValidImage(tempFile))
+        if (IsValidImage(outFile))
         {
-            File.Copy(tempFile, outFile, true);
-            WriteLog("X4 CallByName ExportBitmap SUCCESS copied to: " + outFile);
+            WriteLog("SUCCESS");
             return true;
         }
 
-        WriteLog("X4 CallByName ExportBitmap image invalid");
+        WriteLog("Image invalid");
     }
     catch (Exception ex)
     {
-        WriteLog("X4 CallByName ExportBitmap failed: " + ex);
+        WriteLog("FAILED: " + ex);
     }
 
     return false;
 }
+
 
 
     
