@@ -327,9 +327,7 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
     1200,
     1200,
     96,
-    96,
-    false,
-    false
+    96
 );
 
         try { exp.Finish(); } catch { }
