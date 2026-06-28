@@ -321,7 +321,7 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
 
        dynamic exp = activeDoc.ExportBitmap(
     tempFile,
-    CorelDRAW.cdrFilter.cdrJPEG,
+    772,
     2,
     4,
     1200,
