@@ -319,16 +319,18 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
 
         dynamic activeDoc = _app.ActiveDocument;
 
-        dynamic exp = activeDoc.ExportBitmap(
-            tempFile,
-            774,
-            2,
-            4,
-            1200,
-            1200,
-            96,
-            96
-        );
+       dynamic exp = activeDoc.ExportBitmap(
+    tempFile,
+    774,
+    2,
+    4,
+    1200,
+    1200,
+    96,
+    96,
+    false,
+    false
+);
 
         try { exp.Finish(); } catch { }
 
