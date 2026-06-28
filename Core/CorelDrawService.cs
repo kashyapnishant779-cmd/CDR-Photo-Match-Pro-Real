@@ -303,7 +303,12 @@ namespace CDRPhotoMatchPro.Core
         WriteLog("Selection check failed: " + ex);
     }
 
-    return TryX4Export(doc, outFile, 2);
+    if (TryX4Export(doc, outFile, 2))
+        return true;
+
+    WriteLog("X4 export failed, trying clipboard fallback");
+
+    return CopySelectionToJpg(outFile);
 }
 
 private bool TryX4Export(dynamic doc, string outFile, int range)
