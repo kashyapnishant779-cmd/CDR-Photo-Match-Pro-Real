@@ -1,9 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.Drawing;
-using System.Drawing.Imaging;
 using System.IO;
-using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
@@ -33,32 +30,10 @@ namespace CDRPhotoMatchPro.Core
             if (type == null)
                 throw new InvalidOperationException("CorelDRAW X4 COM not found.");
 
-            Exception lastError = null;
+            _app = Activator.CreateInstance(type);
+            Thread.Sleep(3000);
 
-            for (int i = 1; i <= 5; i++)
-            {
-                try
-                {
-                    _app = Activator.CreateInstance(type);
-                    Thread.Sleep(3000);
-
-                    try { _app.Visible = true; } catch { }
-
-                    string version = Convert.ToString(_app.Version);
-                    WriteLog("CorelDRAW Version : " + version);
-                    WriteLog("COM Connected Successfully");
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    lastError = ex;
-                    WriteLog("CreateInstance Try " + i + " Failed : " + ex);
-                    try { _app = null; } catch { }
-                    Thread.Sleep(3000);
-                }
-            }
-
-            throw new InvalidOperationException("CorelDRAW COM start failed after 5 attempts.", lastError);
+            try { _app.Visible = true; } catch { }
         }
 
         public IEnumerable<DesignRecord> ExportDesigns(string cdrPath, string cacheRoot)
@@ -67,7 +42,7 @@ namespace CDRPhotoMatchPro.Core
             Directory.CreateDirectory(cacheRoot);
 
             _debugLog = Path.Combine(cacheRoot, "export_debug.txt");
-            WriteLog("START: " + cdrPath);
+            WriteLog("START NEW ENGINE: " + cdrPath);
 
             dynamic doc = null;
 
@@ -100,7 +75,7 @@ namespace CDRPhotoMatchPro.Core
                         int designNo = i + 1;
                         string outFile = Path.Combine(cacheRoot, baseName + "_p" + p + "_d" + designNo + ".jpg");
 
-                        bool ok = ExportOneShape(doc, shapes[i].Shape, outFile);
+                        bool ok = ExportShapeX4(doc, shapes[i].Shape, outFile);
 
                         if (ok && IsValidImage(outFile))
                         {
@@ -114,7 +89,7 @@ namespace CDRPhotoMatchPro.Core
                                 ObjectNumber = designNo,
                                 ThumbnailPath = outFile,
                                 PngPath = outFile,
-                                ExportMode = "x4-full-exportbitmap",
+                                ExportMode = "x4-direct-exportbitmap",
                                 ShapeCount = 1
                             });
 
@@ -126,7 +101,7 @@ namespace CDRPhotoMatchPro.Core
                     {
                         string outFile = Path.Combine(cacheRoot, baseName + "_p" + p + "_page.jpg");
 
-                        bool ok = ExportWholePage(doc, page, outFile);
+                        bool ok = ExportPageX4(doc, page, outFile);
 
                         if (ok && IsValidImage(outFile))
                         {
@@ -140,7 +115,7 @@ namespace CDRPhotoMatchPro.Core
                                 ObjectNumber = 1,
                                 ThumbnailPath = outFile,
                                 PngPath = outFile,
-                                ExportMode = "x4-full-page-exportbitmap",
+                                ExportMode = "x4-page-exportbitmap",
                                 ShapeCount = shapes.Count
                             });
 
@@ -216,155 +191,117 @@ namespace CDRPhotoMatchPro.Core
             return list;
         }
 
-        private bool ExportOneShape(dynamic doc, dynamic shape, string outFile)
+        private bool ExportShapeX4(dynamic doc, dynamic shape, string outFile)
         {
             try
             {
                 ClearSelection(doc);
 
-                try { shape.CreateSelection(); }
-                catch (Exception ex)
-                {
-                    WriteLog("CreateSelection failed: " + ex.Message);
-                    return false;
-                }
-
+                shape.CreateSelection();
                 Application.DoEvents();
                 Thread.Sleep(500);
 
-                return ExportSelectionAllMethods(doc, outFile);
+                return ExportSelectedToTempDoc(doc, outFile);
             }
             catch (Exception ex)
             {
-                WriteLog("ExportOneShape failed: " + ex);
+                WriteLog("ExportShapeX4 failed: " + ex);
                 return false;
             }
         }
 
-        private bool ExportWholePage(dynamic doc, dynamic page, string outFile)
+        private bool ExportPageX4(dynamic doc, dynamic page, string outFile)
         {
             try
             {
                 ClearSelection(doc);
 
-                try { page.Shapes.All().CreateSelection(); }
+                page.Shapes.All().CreateSelection();
+                Application.DoEvents();
+                Thread.Sleep(500);
+
+                return ExportSelectedToTempDoc(doc, outFile);
+            }
+            catch (Exception ex)
+            {
+                WriteLog("ExportPageX4 failed: " + ex);
+                return false;
+            }
+        }
+
+        private bool ExportSelectedToTempDoc(dynamic sourceDoc, string outFile)
+        {
+            dynamic tempDoc = null;
+
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(outFile));
+                try { if (File.Exists(outFile)) File.Delete(outFile); } catch { }
+
+                WriteLog("TEMP EXPORT START: " + outFile);
+
+                try
+                {
+                    _app.ActiveSelection.Copy();
+                    WriteLog("Selection copied");
+                }
                 catch (Exception ex)
                 {
-                    WriteLog("Page CreateSelection failed: " + ex.Message);
+                    WriteLog("Selection copy failed: " + ex.Message);
                     return false;
                 }
 
                 Application.DoEvents();
-                Thread.Sleep(500);
+                Thread.Sleep(700);
 
-                return ExportSelectionAllMethods(doc, outFile);
-            }
-            catch (Exception ex)
-            {
-                WriteLog("ExportWholePage failed: " + ex);
-                return false;
-            }
-        }
+                tempDoc = _app.CreateDocument();
+                Application.DoEvents();
+                Thread.Sleep(700);
 
-        private bool ExportSelectionAllMethods(dynamic doc, string outFile)
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(outFile));
-
-            try
-            {
-                int selCount = GetSelectionCount();
-                WriteLog("Selection check count=" + selCount);
-
-                if (selCount <= 0)
+                try
                 {
-                    WriteLog("No active selection before export");
+                    tempDoc.ActiveLayer.Paste();
+                    WriteLog("Pasted in temp document");
+                }
+                catch (Exception ex)
+                {
+                    WriteLog("Temp paste failed: " + ex.Message);
+                    try { tempDoc.Close(); } catch { }
                     return false;
                 }
 
-                if (ExportBitmapFullX4(doc, outFile, 2))
-                    return true;
+                Application.DoEvents();
+                Thread.Sleep(1000);
 
-                if (ExportBitmapFullX4(doc, outFile, 1))
-                    return true;
+                try
+                {
+                    tempDoc.ActivePage.Shapes.All().CreateSelection();
+                    WriteLog("Temp page selected");
+                }
+                catch { }
 
-                if (ExportByStructX4(doc, outFile, 2))
-                    return true;
+                bool ok = ExportCurrentPageBitmapX4(tempDoc, outFile);
 
-                if (ExportByStructX4(doc, outFile, 1))
-                    return true;
+                try { tempDoc.Close(); } catch { }
 
-                if (ExportByTempDocument(doc, outFile))
+                if (ok)
+                {
+                    WriteLog("TEMP EXPORT OK");
                     return true;
+                }
 
-                WriteLog("All export methods failed");
+                WriteLog("TEMP EXPORT FAILED");
                 return false;
             }
             catch (Exception ex)
             {
-                WriteLog("ExportSelectionAllMethods failed: " + ex);
+                WriteLog("ExportSelectedToTempDoc failed: " + ex);
+                try { if (tempDoc != null) tempDoc.Close(); } catch { }
                 return false;
             }
         }
 
-        private int GetSelectionCount()
-        {
-            try
-            {
-                dynamic sel = _app.ActiveSelection;
-                return Convert.ToInt32(sel.Shapes.Count);
-            }
-            catch
-            {
-                return 0;
-            }
-        }
-
-       private bool ExportBitmapFullX4(dynamic doc, string outFile, int range)
-{
-    int[] filters = new int[] { 772, 774 };
-
-    foreach (int filter in filters)
-    {
-        try
-        {
-            try { if (File.Exists(outFile)) File.Delete(outFile); } catch { }
-
-            WriteLog("ExportBitmap X4 correct start filter=" + filter + " range=" + range);
-
-            dynamic exp = doc.ExportBitmap(
-                outFile,
-                filter,
-                range,
-                4,
-                1200,
-                1200,
-                300,
-                300
-            );
-
-            FinishExport(exp);
-
-            Application.DoEvents();
-            Thread.Sleep(1500);
-
-            if (IsValidImage(outFile))
-            {
-                WriteLog("ExportBitmap X4 correct OK: " + outFile);
-                return true;
-            }
-
-            WriteLog("ExportBitmap X4 correct invalid image");
-        }
-        catch (Exception ex)
-        {
-            WriteLog("ExportBitmap X4 correct failed filter=" + filter + " range=" + range + " : " + ex.Message);
-        }
-    }
-
-    return false;
-}
-
-        private bool ExportByStructX4(dynamic doc, string outFile, int range)
+        private bool ExportCurrentPageBitmapX4(dynamic doc, string outFile)
         {
             int[] filters = new int[] { 772, 774 };
 
@@ -374,148 +311,39 @@ namespace CDRPhotoMatchPro.Core
                 {
                     try { if (File.Exists(outFile)) File.Delete(outFile); } catch { }
 
-                    WriteLog("Struct Export start filter=" + filter + " range=" + range);
+                    WriteLog("ExportBitmap X4 EXACT start filter=" + filter);
 
-                    dynamic opt = _app.CreateStructExportOptions();
-                    dynamic pal = _app.CreateStructPaletteOptions();
-
-                    TrySet(opt, "ImageType", 4);
-                    TrySet(opt, "ResolutionX", 300);
-                    TrySet(opt, "ResolutionY", 300);
-                    TrySet(opt, "SizeX", 1200);
-                    TrySet(opt, "SizeY", 1200);
-                    TrySet(opt, "MaintainAspect", true);
-                    TrySet(opt, "AntiAliasingType", 1);
-                    TrySet(opt, "Transparent", false);
-                    TrySet(opt, "UseColorProfile", false);
-
-                    object exp = CallComMethod(doc, "Export", new object[]
-                    {
+                    dynamic exp = doc.ExportBitmap(
                         outFile,
                         filter,
-                        range,
-                        opt,
-                        pal
-                    });
+                        1,
+                        4,
+                        1200,
+                        1200,
+                        300,
+                        300
+                    );
 
-                    FinishExport(exp);
+                    try { exp.Finish(); } catch { }
 
                     Application.DoEvents();
-                    Thread.Sleep(1500);
+                    Thread.Sleep(2000);
 
                     if (IsValidImage(outFile))
                     {
-                        WriteLog("Struct Export OK: " + outFile);
+                        WriteLog("ExportBitmap X4 EXACT OK: " + outFile);
                         return true;
                     }
 
-                    WriteLog("Struct Export invalid image");
+                    WriteLog("ExportBitmap X4 EXACT invalid image filter=" + filter);
                 }
                 catch (Exception ex)
                 {
-                    WriteLog("Struct Export failed filter=" + filter + " range=" + range + " : " + ex.Message);
+                    WriteLog("ExportBitmap X4 EXACT failed filter=" + filter + " : " + ex);
                 }
             }
 
             return false;
-        }
-
-        private bool ExportByTempDocument(dynamic sourceDoc, string outFile)
-        {
-            dynamic tempDoc = null;
-
-            try
-            {
-                WriteLog("Temp document export start");
-
-                try { sourceDoc.Application.ActiveSelection.Copy(); }
-                catch { _app.ActiveSelection.Copy(); }
-
-                Application.DoEvents();
-                Thread.Sleep(700);
-
-                tempDoc = sourceDoc.Application.CreateDocument();
-
-                Application.DoEvents();
-                Thread.Sleep(700);
-
-                try { tempDoc.ActiveLayer.Paste(); }
-                catch { _app.ActiveLayer.Paste(); }
-
-                Application.DoEvents();
-                Thread.Sleep(1000);
-
-                try { tempDoc.ActivePage.Shapes.All().CreateSelection(); } catch { }
-
-                if (ExportBitmapFullX4(tempDoc, outFile, 1))
-                {
-                    try { tempDoc.Close(); } catch { }
-                    WriteLog("Temp document export OK");
-                    return true;
-                }
-
-                if (ExportByStructX4(tempDoc, outFile, 1))
-                {
-                    try { tempDoc.Close(); } catch { }
-                    WriteLog("Temp document struct export OK");
-                    return true;
-                }
-
-                try { tempDoc.Close(); } catch { }
-
-                WriteLog("Temp document export failed");
-                return false;
-            }
-            catch (Exception ex)
-            {
-                WriteLog("ExportByTempDocument failed: " + ex);
-                try { if (tempDoc != null) tempDoc.Close(); } catch { }
-                return false;
-            }
-        }
-
-        private object CallComMethod(object obj, string method, object[] args)
-        {
-            return obj.GetType().InvokeMember(
-                method,
-                BindingFlags.InvokeMethod,
-                null,
-                obj,
-                args
-            );
-        }
-
-        private void FinishExport(object exp)
-        {
-            try
-            {
-                if (exp != null)
-                {
-                    exp.GetType().InvokeMember(
-                        "Finish",
-                        BindingFlags.InvokeMethod,
-                        null,
-                        exp,
-                        new object[] { }
-                    );
-                }
-            }
-            catch { }
-        }
-
-        private void TrySet(dynamic obj, string prop, object value)
-        {
-            try
-            {
-                obj.GetType().InvokeMember(
-                    prop,
-                    BindingFlags.SetProperty,
-                    null,
-                    obj,
-                    new object[] { value }
-                );
-            }
-            catch { }
         }
 
         private void ClearSelection(dynamic doc)
