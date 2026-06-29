@@ -1,9 +1,9 @@
-using System.Reflection;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
@@ -23,59 +23,43 @@ namespace CDRPhotoMatchPro.Core
             public dynamic Shape;
         }
 
-       public CorelDrawService()
-{
-    Type type = Type.GetTypeFromProgID("CorelDRAW.Application.14");
-
-    if (type == null)
-        type = Type.GetTypeFromProgID("CorelDRAW.Application");
-
-    if (type == null)
-        throw new InvalidOperationException("CorelDRAW X4 COM not found.");
-
-    Exception lastError = null;
-
-    for (int i = 1; i <= 5; i++)
-    {
-        try
+        public CorelDrawService()
         {
-            _app = Activator.CreateInstance(type);
+            Type type = Type.GetTypeFromProgID("CorelDRAW.Application.14");
 
-            Thread.Sleep(3000);
+            if (type == null)
+                type = Type.GetTypeFromProgID("CorelDRAW.Application");
 
-            try
+            if (type == null)
+                throw new InvalidOperationException("CorelDRAW X4 COM not found.");
+
+            Exception lastError = null;
+
+            for (int i = 1; i <= 5; i++)
             {
-                _app.Visible = true;
+                try
+                {
+                    _app = Activator.CreateInstance(type);
+                    Thread.Sleep(3000);
+
+                    try { _app.Visible = true; } catch { }
+
+                    string version = Convert.ToString(_app.Version);
+                    WriteLog("CorelDRAW Version : " + version);
+                    WriteLog("COM Connected Successfully");
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex;
+                    WriteLog("CreateInstance Try " + i + " Failed : " + ex);
+                    try { _app = null; } catch { }
+                    Thread.Sleep(3000);
+                }
             }
-            catch { }
 
-            // COM connection test
-            string version = Convert.ToString(_app.Version);
-
-            WriteLog("CorelDRAW Version : " + version);
-            WriteLog("COM Connected Successfully");
-
-            return;
+            throw new InvalidOperationException("CorelDRAW COM start failed after 5 attempts.", lastError);
         }
-        catch (Exception ex)
-        {
-            lastError = ex;
-            WriteLog("CreateInstance Try " + i + " Failed : " + ex);
-
-            try
-            {
-                _app = null;
-            }
-            catch { }
-
-            Thread.Sleep(3000);
-        }
-    }
-
-    throw new InvalidOperationException(
-        "CorelDRAW COM start failed after 5 attempts.",
-        lastError);
-} 
 
         public IEnumerable<DesignRecord> ExportDesigns(string cdrPath, string cacheRoot)
         {
@@ -130,7 +114,7 @@ namespace CDRPhotoMatchPro.Core
                                 ObjectNumber = designNo,
                                 ThumbnailPath = outFile,
                                 PngPath = outFile,
-                                ExportMode = "x4-debug-export",
+                                ExportMode = "x4-full-exportbitmap",
                                 ShapeCount = 1
                             });
 
@@ -156,7 +140,7 @@ namespace CDRPhotoMatchPro.Core
                                 ObjectNumber = 1,
                                 ThumbnailPath = outFile,
                                 PngPath = outFile,
-                                ExportMode = "x4-page-debug-export",
+                                ExportMode = "x4-full-page-exportbitmap",
                                 ShapeCount = shapes.Count
                             });
 
@@ -246,7 +230,7 @@ namespace CDRPhotoMatchPro.Core
                 }
 
                 Application.DoEvents();
-                Thread.Sleep(400);
+                Thread.Sleep(500);
 
                 return ExportSelectionAllMethods(doc, outFile);
             }
@@ -271,7 +255,7 @@ namespace CDRPhotoMatchPro.Core
                 }
 
                 Application.DoEvents();
-                Thread.Sleep(400);
+                Thread.Sleep(500);
 
                 return ExportSelectionAllMethods(doc, outFile);
             }
@@ -281,125 +265,262 @@ namespace CDRPhotoMatchPro.Core
                 return false;
             }
         }
-         private bool ExportSelectionAllMethods(dynamic doc, string outFile)
-{
-    Directory.CreateDirectory(Path.GetDirectoryName(outFile));
 
-    try
-    {
-        dynamic sel = _app.ActiveSelection;
-        int selCount = 0;
-        try { selCount = Convert.ToInt32(sel.Shapes.Count); } catch { }
-
-        WriteLog("Selection check count=" + selCount);
-
-        if (selCount <= 0)
+        private bool ExportSelectionAllMethods(dynamic doc, string outFile)
         {
-            WriteLog("No active selection before export");
+            Directory.CreateDirectory(Path.GetDirectoryName(outFile));
+
+            try
+            {
+                int selCount = GetSelectionCount();
+                WriteLog("Selection check count=" + selCount);
+
+                if (selCount <= 0)
+                {
+                    WriteLog("No active selection before export");
+                    return false;
+                }
+
+                if (ExportBitmapFullX4(doc, outFile, 2))
+                    return true;
+
+                if (ExportBitmapFullX4(doc, outFile, 1))
+                    return true;
+
+                if (ExportByStructX4(doc, outFile, 2))
+                    return true;
+
+                if (ExportByStructX4(doc, outFile, 1))
+                    return true;
+
+                if (ExportByTempDocument(doc, outFile))
+                    return true;
+
+                WriteLog("All export methods failed");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                WriteLog("ExportSelectionAllMethods failed: " + ex);
+                return false;
+            }
+        }
+
+        private int GetSelectionCount()
+        {
+            try
+            {
+                dynamic sel = _app.ActiveSelection;
+                return Convert.ToInt32(sel.Shapes.Count);
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        private bool ExportBitmapFullX4(dynamic doc, string outFile, int range)
+        {
+            int[] filters = new int[] { 772, 774 };
+
+            foreach (int filter in filters)
+            {
+                try
+                {
+                    try { if (File.Exists(outFile)) File.Delete(outFile); } catch { }
+
+                    WriteLog("ExportBitmap FULL start filter=" + filter + " range=" + range);
+
+                    object exp = CallComMethod(doc, "ExportBitmap", new object[]
+                    {
+                        outFile,
+                        filter,
+                        range,
+                        4,
+                        1,
+                        false,
+                        false,
+                        1200,
+                        1200,
+                        300,
+                        300
+                    });
+
+                    FinishExport(exp);
+
+                    Application.DoEvents();
+                    Thread.Sleep(1500);
+
+                    if (IsValidImage(outFile))
+                    {
+                        WriteLog("ExportBitmap FULL OK: " + outFile);
+                        return true;
+                    }
+
+                    WriteLog("ExportBitmap FULL invalid image");
+                }
+                catch (Exception ex)
+                {
+                    WriteLog("ExportBitmap FULL failed filter=" + filter + " range=" + range + " : " + ex.Message);
+                }
+            }
+
             return false;
         }
 
-        if (ExportByTempDocument(doc, outFile))
-            return true;
-
-        WriteLog("Temp document export failed, trying current page fallback");
-
-        return ExportCurrentPageX4(doc, outFile);
-    }
-    catch (Exception ex)
-    {
-        WriteLog("ExportSelectionAllMethods failed: " + ex);
-        return false;
-    }
-}
-
-private bool ExportByTempDocument(dynamic sourceDoc, string outFile)
-{
-    dynamic tempDoc = null;
-
-    try
-    {
-        WriteLog("Temp document export start");
-
-        try { sourceDoc.Application.ActiveSelection.Copy(); }
-        catch { _app.ActiveSelection.Copy(); }
-
-        Application.DoEvents();
-        Thread.Sleep(500);
-
-        tempDoc = sourceDoc.Application.CreateDocument();
-
-        Application.DoEvents();
-        Thread.Sleep(500);
-
-        tempDoc.ActiveLayer.Paste();
-
-        Application.DoEvents();
-        Thread.Sleep(800);
-
-        try { tempDoc.ActivePage.Shapes.All().CreateSelection(); } catch { }
-
-        bool ok = ExportCurrentPageX4(tempDoc, outFile);
-
-        try { tempDoc.Close(); } catch { }
-
-        if (ok)
+        private bool ExportByStructX4(dynamic doc, string outFile, int range)
         {
-            WriteLog("Temp document export OK");
-            return true;
+            int[] filters = new int[] { 772, 774 };
+
+            foreach (int filter in filters)
+            {
+                try
+                {
+                    try { if (File.Exists(outFile)) File.Delete(outFile); } catch { }
+
+                    WriteLog("Struct Export start filter=" + filter + " range=" + range);
+
+                    dynamic opt = _app.CreateStructExportOptions();
+                    dynamic pal = _app.CreateStructPaletteOptions();
+
+                    TrySet(opt, "ImageType", 4);
+                    TrySet(opt, "ResolutionX", 300);
+                    TrySet(opt, "ResolutionY", 300);
+                    TrySet(opt, "SizeX", 1200);
+                    TrySet(opt, "SizeY", 1200);
+                    TrySet(opt, "MaintainAspect", true);
+                    TrySet(opt, "AntiAliasingType", 1);
+                    TrySet(opt, "Transparent", false);
+                    TrySet(opt, "UseColorProfile", false);
+
+                    object exp = CallComMethod(doc, "Export", new object[]
+                    {
+                        outFile,
+                        filter,
+                        range,
+                        opt,
+                        pal
+                    });
+
+                    FinishExport(exp);
+
+                    Application.DoEvents();
+                    Thread.Sleep(1500);
+
+                    if (IsValidImage(outFile))
+                    {
+                        WriteLog("Struct Export OK: " + outFile);
+                        return true;
+                    }
+
+                    WriteLog("Struct Export invalid image");
+                }
+                catch (Exception ex)
+                {
+                    WriteLog("Struct Export failed filter=" + filter + " range=" + range + " : " + ex.Message);
+                }
+            }
+
+            return false;
         }
 
-        WriteLog("Temp document export invalid image");
-        return false;
-    }
-    catch (Exception ex)
-    {
-        WriteLog("ExportByTempDocument failed: " + ex);
-        try { if (tempDoc != null) tempDoc.Close(); } catch { }
-        return false;
-    }
-}
-
-private bool ExportCurrentPageX4(dynamic doc, string outFile)
-{
-    try
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(outFile));
-        try { if (File.Exists(outFile)) File.Delete(outFile); } catch { }
-
-        WriteLog("ExportBitmap current page start");
-
-        dynamic exp = doc.ExportBitmap(
-            outFile,
-            772,
-            2,
-            4,
-            1200,
-            1200,
-            96,
-            96
-        );
-
-        try { exp.Finish(); } catch { }
-
-        Application.DoEvents();
-        Thread.Sleep(1500);
-
-        if (IsValidImage(outFile))
+        private bool ExportByTempDocument(dynamic sourceDoc, string outFile)
         {
-            WriteLog("ExportBitmap current page OK: " + outFile);
-            return true;
+            dynamic tempDoc = null;
+
+            try
+            {
+                WriteLog("Temp document export start");
+
+                try { sourceDoc.Application.ActiveSelection.Copy(); }
+                catch { _app.ActiveSelection.Copy(); }
+
+                Application.DoEvents();
+                Thread.Sleep(700);
+
+                tempDoc = sourceDoc.Application.CreateDocument();
+
+                Application.DoEvents();
+                Thread.Sleep(700);
+
+                try { tempDoc.ActiveLayer.Paste(); }
+                catch { _app.ActiveLayer.Paste(); }
+
+                Application.DoEvents();
+                Thread.Sleep(1000);
+
+                try { tempDoc.ActivePage.Shapes.All().CreateSelection(); } catch { }
+
+                if (ExportBitmapFullX4(tempDoc, outFile, 1))
+                {
+                    try { tempDoc.Close(); } catch { }
+                    WriteLog("Temp document export OK");
+                    return true;
+                }
+
+                if (ExportByStructX4(tempDoc, outFile, 1))
+                {
+                    try { tempDoc.Close(); } catch { }
+                    WriteLog("Temp document struct export OK");
+                    return true;
+                }
+
+                try { tempDoc.Close(); } catch { }
+
+                WriteLog("Temp document export failed");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                WriteLog("ExportByTempDocument failed: " + ex);
+                try { if (tempDoc != null) tempDoc.Close(); } catch { }
+                return false;
+            }
         }
 
-        WriteLog("ExportBitmap current page invalid image");
-    }
-    catch (Exception ex)
-    {
-        WriteLog("ExportCurrentPageX4 failed: " + ex);
-    }
+        private object CallComMethod(object obj, string method, object[] args)
+        {
+            return obj.GetType().InvokeMember(
+                method,
+                BindingFlags.InvokeMethod,
+                null,
+                obj,
+                args
+            );
+        }
 
-    return false;
-}
+        private void FinishExport(object exp)
+        {
+            try
+            {
+                if (exp != null)
+                {
+                    exp.GetType().InvokeMember(
+                        "Finish",
+                        BindingFlags.InvokeMethod,
+                        null,
+                        exp,
+                        new object[] { }
+                    );
+                }
+            }
+            catch { }
+        }
+
+        private void TrySet(dynamic obj, string prop, object value)
+        {
+            try
+            {
+                obj.GetType().InvokeMember(
+                    prop,
+                    BindingFlags.SetProperty,
+                    null,
+                    obj,
+                    new object[] { value }
+                );
+            }
+            catch { }
+        }
 
         private void ClearSelection(dynamic doc)
         {
@@ -423,7 +544,14 @@ private bool ExportCurrentPageX4(dynamic doc, string outFile)
         {
             try
             {
-                File.AppendAllText(_debugLog, DateTime.Now.ToString("HH:mm:ss") + " | " + text + Environment.NewLine, Encoding.UTF8);
+                if (string.IsNullOrEmpty(_debugLog))
+                    return;
+
+                File.AppendAllText(
+                    _debugLog,
+                    DateTime.Now.ToString("HH:mm:ss") + " | " + text + Environment.NewLine,
+                    Encoding.UTF8
+                );
             }
             catch { }
         }
@@ -442,21 +570,20 @@ private bool ExportCurrentPageX4(dynamic doc, string outFile)
             catch { return 0; }
         }
 
-       public void Dispose()
-{
-    try
-    {
-        if (_app != null)
+        public void Dispose()
         {
-            try { _app.Quit(); } catch { }
+            try
+            {
+                if (_app != null)
+                {
+                    try { _app.Quit(); } catch { }
+                }
+            }
+            catch { }
+            finally
+            {
+                _app = null;
+            }
         }
-    }
-    catch { }
-    finally
-    {
-        _app = null;
-    }
-}
-
     }
 }
