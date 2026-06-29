@@ -1,3 +1,4 @@
+using System.Reflection;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -297,35 +298,79 @@ namespace CDRPhotoMatchPro.Core
             WriteLog("No active selection before export");
             return false;
         }
+
+        if (ExportByTempDocument(doc, outFile))
+            return true;
+
+        WriteLog("Temp document export failed, trying current page fallback");
+
+        return ExportCurrentPageX4(doc, outFile);
     }
     catch (Exception ex)
     {
-        WriteLog("Selection check failed: " + ex);
+        WriteLog("ExportSelectionAllMethods failed: " + ex);
+        return false;
     }
-
-    if (TryX4Export(doc, outFile, 2))
-        return true;
-
-    WriteLog("X4 export failed, trying clipboard fallback");
-
-    return CopySelectionToJpg(outFile);
 }
 
-private bool TryX4Export(dynamic doc, string outFile, int range)
+private bool ExportByTempDocument(dynamic sourceDoc, string outFile)
+{
+    dynamic tempDoc = null;
+
+    try
+    {
+        WriteLog("Temp document export start");
+
+        try { sourceDoc.Application.ActiveSelection.Copy(); }
+        catch { _app.ActiveSelection.Copy(); }
+
+        Application.DoEvents();
+        Thread.Sleep(500);
+
+        tempDoc = sourceDoc.Application.CreateDocument();
+
+        Application.DoEvents();
+        Thread.Sleep(500);
+
+        tempDoc.ActiveLayer.Paste();
+
+        Application.DoEvents();
+        Thread.Sleep(800);
+
+        try { tempDoc.ActivePage.Shapes.All().CreateSelection(); } catch { }
+
+        bool ok = ExportCurrentPageX4(tempDoc, outFile);
+
+        try { tempDoc.Close(); } catch { }
+
+        if (ok)
+        {
+            WriteLog("Temp document export OK");
+            return true;
+        }
+
+        WriteLog("Temp document export invalid image");
+        return false;
+    }
+    catch (Exception ex)
+    {
+        WriteLog("ExportByTempDocument failed: " + ex);
+        try { if (tempDoc != null) tempDoc.Close(); } catch { }
+        return false;
+    }
+}
+
+private bool ExportCurrentPageX4(dynamic doc, string outFile)
 {
     try
     {
         Directory.CreateDirectory(Path.GetDirectoryName(outFile));
+        try { if (File.Exists(outFile)) File.Delete(outFile); } catch { }
 
-        string tempFile = @"D:\TEST\x4_export_test.jpg";
-        try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { }
+        WriteLog("ExportBitmap current page start");
 
-        WriteLog("X4 ExportBitmap via app.ActiveDocument start");
-
-        dynamic activeDoc = _app.ActiveDocument;
-
-        dynamic exp = activeDoc.ExportBitmap(
-            tempFile,
+        dynamic exp = doc.ExportBitmap(
+            outFile,
             772,
             2,
             4,
@@ -338,99 +383,23 @@ private bool TryX4Export(dynamic doc, string outFile, int range)
         try { exp.Finish(); } catch { }
 
         Application.DoEvents();
-        Thread.Sleep(2000);
+        Thread.Sleep(1500);
 
-        if (IsValidImage(tempFile))
+        if (IsValidImage(outFile))
         {
-            File.Copy(tempFile, outFile, true);
-            WriteLog("SUCCESS copied: " + outFile);
+            WriteLog("ExportBitmap current page OK: " + outFile);
             return true;
         }
 
-        WriteLog("Image invalid after ExportBitmap");
+        WriteLog("ExportBitmap current page invalid image");
     }
     catch (Exception ex)
     {
-        WriteLog("FAILED: " + ex);
+        WriteLog("ExportCurrentPageX4 failed: " + ex);
     }
 
     return false;
 }
-
-
-            private bool CopySelectionToJpg(string outFile)
-{
-    try
-    {
-        WriteLog("Clipboard export start");
-
-        try { Clipboard.Clear(); } catch { }
-
-        try { _app.ActiveWindow.Activate(); } catch { }
-
-        Application.DoEvents();
-        Thread.Sleep(500);
-
-        try
-        {
-            SendKeys.SendWait("^c");
-            WriteLog("SendKeys Ctrl+C done");
-        }
-        catch (Exception ex)
-        {
-            WriteLog("SendKeys Ctrl+C failed: " + ex.Message);
-        }
-
-        Application.DoEvents();
-        Thread.Sleep(1500);
-
-        IDataObject data = Clipboard.GetDataObject();
-
-        if (data != null)
-        {
-            string[] formats = data.GetFormats();
-            WriteLog("Clipboard formats: " + string.Join(",", formats));
-        }
-        else
-        {
-            WriteLog("Clipboard data object is null");
-        }
-
-        for (int i = 0; i < 30; i++)
-        {
-            Application.DoEvents();
-            Thread.Sleep(200);
-
-            if (Clipboard.ContainsImage())
-            {
-                using (Image img = Clipboard.GetImage())
-                {
-                    if (img != null)
-                    {
-                        using (Bitmap bmp = new Bitmap(img))
-                        {
-                            bmp.Save(outFile, ImageFormat.Jpeg);
-                        }
-
-                        WriteLog("Clipboard image saved: " + outFile);
-
-                        if (IsValidImage(outFile))
-                            return true;
-                    }
-                }
-            }
-        }
-
-        WriteLog("Clipboard export failed: no bitmap image found");
-    }
-    catch (Exception ex)
-    {
-        WriteLog("CopySelectionToJpg failed: " + ex);
-    }
-
-    return false;
-}
-
 
         private void ClearSelection(dynamic doc)
         {
