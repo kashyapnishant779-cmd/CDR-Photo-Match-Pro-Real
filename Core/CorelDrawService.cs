@@ -319,54 +319,50 @@ namespace CDRPhotoMatchPro.Core
             }
         }
 
-        private bool ExportBitmapFullX4(dynamic doc, string outFile, int range)
+       private bool ExportBitmapFullX4(dynamic doc, string outFile, int range)
+{
+    int[] filters = new int[] { 772, 774 };
+
+    foreach (int filter in filters)
+    {
+        try
         {
-            int[] filters = new int[] { 772, 774 };
+            try { if (File.Exists(outFile)) File.Delete(outFile); } catch { }
 
-            foreach (int filter in filters)
+            WriteLog("ExportBitmap X4 correct start filter=" + filter + " range=" + range);
+
+            dynamic exp = doc.ExportBitmap(
+                outFile,
+                filter,
+                range,
+                4,
+                1200,
+                1200,
+                300,
+                300
+            );
+
+            FinishExport(exp);
+
+            Application.DoEvents();
+            Thread.Sleep(1500);
+
+            if (IsValidImage(outFile))
             {
-                try
-                {
-                    try { if (File.Exists(outFile)) File.Delete(outFile); } catch { }
-
-                    WriteLog("ExportBitmap FULL start filter=" + filter + " range=" + range);
-
-                    object exp = CallComMethod(doc, "ExportBitmap", new object[]
-                    {
-                        outFile,
-                        filter,
-                        range,
-                        4,
-                        1,
-                        false,
-                        false,
-                        1200,
-                        1200,
-                        300,
-                        300
-                    });
-
-                    FinishExport(exp);
-
-                    Application.DoEvents();
-                    Thread.Sleep(1500);
-
-                    if (IsValidImage(outFile))
-                    {
-                        WriteLog("ExportBitmap FULL OK: " + outFile);
-                        return true;
-                    }
-
-                    WriteLog("ExportBitmap FULL invalid image");
-                }
-                catch (Exception ex)
-                {
-                    WriteLog("ExportBitmap FULL failed filter=" + filter + " range=" + range + " : " + ex.Message);
-                }
+                WriteLog("ExportBitmap X4 correct OK: " + outFile);
+                return true;
             }
 
-            return false;
+            WriteLog("ExportBitmap X4 correct invalid image");
         }
+        catch (Exception ex)
+        {
+            WriteLog("ExportBitmap X4 correct failed filter=" + filter + " range=" + range + " : " + ex.Message);
+        }
+    }
+
+    return false;
+}
 
         private bool ExportByStructX4(dynamic doc, string outFile, int range)
         {
