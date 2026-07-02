@@ -26,10 +26,12 @@ namespace CDRPhotoMatchPro.UI
         private Label status;
         private CancellationTokenSource cts;
 
+        private Button openCdrBtn, openFolderBtn, copyPathBtn;
+
         public MainForm()
         {
             Text = "CDR Photo Match Pro";
-            Width = 1200;
+            Width = 1250;
             Height = 720;
             StartPosition = FormStartPosition.CenterScreen;
 
@@ -85,12 +87,28 @@ namespace CDRPhotoMatchPro.UI
             search.Click += delegate { SearchImage(); };
             top.Controls.Add(search);
 
+            var bottom = new Panel { Dock = DockStyle.Bottom, Height = 42 };
+            page.Controls.Add(bottom);
+
+            openCdrBtn = new Button { Text = "Open CDR", Left = 10, Top = 8, Width = 110 };
+            openCdrBtn.Click += delegate { OpenSelectedCdr(); };
+            bottom.Controls.Add(openCdrBtn);
+
+            openFolderBtn = new Button { Text = "Open Folder", Left = 130, Top = 8, Width = 120 };
+            openFolderBtn.Click += delegate { OpenSelectedFolder(); };
+            bottom.Controls.Add(openFolderBtn);
+
+            copyPathBtn = new Button { Text = "Copy Full Path", Left = 260, Top = 8, Width = 130 };
+            copyPathBtn.Click += delegate { CopySelectedPath(); };
+            bottom.Controls.Add(copyPathBtn);
+
             preview = new PictureBox
             {
                 Dock = DockStyle.Right,
-                Width = 320,
+                Width = 330,
                 SizeMode = PictureBoxSizeMode.Zoom,
-                BorderStyle = BorderStyle.FixedSingle
+                BorderStyle = BorderStyle.FixedSingle,
+                BackColor = Color.White
             };
             page.Controls.Add(preview);
 
@@ -100,16 +118,18 @@ namespace CDRPhotoMatchPro.UI
                 ReadOnly = true,
                 AutoGenerateColumns = false,
                 AllowUserToAddRows = false,
-                SelectionMode = DataGridViewSelectionMode.FullRowSelect
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                MultiSelect = false,
+                AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None
             };
 
             grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Match %", DataPropertyName = "MatchPercent", Width = 80 });
-            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "CDR File", DataPropertyName = "CdrFileName", Width = 170 });
-            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Folder Path", DataPropertyName = "FullFolderPath", Width = 330 });
-            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Page", DataPropertyName = "PageNumber", Width = 60 });
-            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Design No", DataPropertyName = "DesignNumber", Width = 80 });
-            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Mode", DataPropertyName = "ExportMode", Width = 110 });
-            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Shapes", DataPropertyName = "ShapeCount", Width = 70 });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "CDR File", DataPropertyName = "CdrFileName", Width = 140 });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Full CDR Path", DataPropertyName = "CdrPath", Width = 430 });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Page", DataPropertyName = "PageNumber", Width = 55 });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Design No", DataPropertyName = "DesignNumber", Width = 75 });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Mode", DataPropertyName = "ExportMode", Width = 80 });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Shapes", DataPropertyName = "ShapeCount", Width = 60 });
 
             grid.DoubleClick += OnGridDoubleClick;
             grid.SelectionChanged += OnGridSelectionChanged;
@@ -137,15 +157,14 @@ namespace CDRPhotoMatchPro.UI
             cancel.Click += delegate { if (cts != null) cts.Cancel(); };
             page.Controls.Add(cancel);
 
-            var info = new Label
+            page.Controls.Add(new Label
             {
                 Left = 20,
                 Top = 75,
                 Width = 950,
                 Height = 140,
-                Text = "This scans CDR files recursively, opens them through CorelDRAW COM, groups nearby shapes as complete designs, exports each design thumbnail, extracts image descriptors, and stores CDR file path + page number + design number."
-            };
-            page.Controls.Add(info);
+                Text = "This scans CDR files recursively, exports design thumbnails, stores full CDR path + page number + design number."
+            });
         }
 
         private void BuildIndexTab()
@@ -175,9 +194,9 @@ namespace CDRPhotoMatchPro.UI
             var page = new TabPage("Settings");
             tabs.TabPages.Add(page);
 
-            page.Controls.Add(new Label { Left = 20, Top = 28, Width = 180, Text = "New design threshold %" });
+            page.Controls.Add(new Label { Left = 20, Top = 28, Width = 180, Text = "Minimum match %" });
 
-            thresholdBox = new TextBox { Left = 210, Top = 24, Width = 80, Text = "35" };
+            thresholdBox = new TextBox { Left = 210, Top = 24, Width = 80, Text = "45" };
             page.Controls.Add(thresholdBox);
 
             page.Controls.Add(new Label
@@ -185,7 +204,7 @@ namespace CDRPhotoMatchPro.UI
                 Left = 20,
                 Top = 65,
                 Width = 850,
-                Text = "Increase threshold for stricter matches. Lower threshold finds more similar/partial matches."
+                Text = "45 recommended. Lower value = more possible matches. Higher value = stricter exact match."
             });
         }
 
@@ -214,7 +233,7 @@ namespace CDRPhotoMatchPro.UI
 
             double threshold;
             if (!double.TryParse(thresholdBox.Text, out threshold))
-                threshold = 35;
+                threshold = 45;
 
             var matcher = new ImageMatcher();
             var query = matcher.ExtractDescriptorBytes(imagePath.Text);
@@ -226,7 +245,7 @@ namespace CDRPhotoMatchPro.UI
                 {
                     var score = matcher.Compare(query, d.Descriptor);
 
-                    if (score > 1)
+                    if (score >= threshold)
                     {
                         results.Add(new MatchResult
                         {
@@ -255,15 +274,12 @@ namespace CDRPhotoMatchPro.UI
 
             if (top.Count == 0)
             {
-                status.Text = "NEW DESIGN REQUIRED - no indexed match found";
-            }
-            else if (top[0].MatchPercent < threshold)
-            {
-                status.Text = "NEW DESIGN REQUIRED - best only " + top[0].MatchPercent + "%";
+                status.Text = "NEW DESIGN REQUIRED - no good match found above " + threshold + "%";
+                preview.ImageLocation = imagePath.Text;
             }
             else
             {
-                status.Text = "Best match: " + top[0].MatchPercent + "% | " + top[0].CdrFileName + " | Page " + top[0].PageNumber + " | Design " + top[0].DesignNumber;
+                status.Text = "Best match: " + top[0].MatchPercent + "% | " + top[0].CdrPath + " | Page " + top[0].PageNumber + " | Design " + top[0].DesignNumber;
             }
         }
 
@@ -300,9 +316,14 @@ namespace CDRPhotoMatchPro.UI
             }
         }
 
+        private MatchResult SelectedItem()
+        {
+            return grid.CurrentRow == null ? null : grid.CurrentRow.DataBoundItem as MatchResult;
+        }
+
         private void OnGridSelectionChanged(object sender, EventArgs e)
         {
-            var item = grid.CurrentRow == null ? null : grid.CurrentRow.DataBoundItem as MatchResult;
+            var item = SelectedItem();
 
             if (item != null)
             {
@@ -316,22 +337,41 @@ namespace CDRPhotoMatchPro.UI
             }
         }
 
-        private void OnGridDoubleClick(object sender, EventArgs e)
+        private void OpenSelectedCdr()
         {
-            var item = grid.CurrentRow == null ? null : grid.CurrentRow.DataBoundItem as MatchResult;
+            var item = SelectedItem();
+            if (item != null && File.Exists(item.CdrPath))
+                Process.Start(item.CdrPath);
+        }
+
+        private void OpenSelectedFolder()
+        {
+            var item = SelectedItem();
             if (item == null)
                 return;
 
-            var choice = MessageBox.Show(
-                "Yes = Open CDR\nNo = Open Folder",
-                "Open",
-                MessageBoxButtons.YesNoCancel
-            );
+            string folder = item.FullFolderPath;
 
-            if (choice == DialogResult.Yes && File.Exists(item.CdrPath))
-                Process.Start(item.CdrPath);
-            else if (choice == DialogResult.No && Directory.Exists(item.FullFolderPath))
-                Process.Start(item.FullFolderPath);
+            if (string.IsNullOrEmpty(folder) && !string.IsNullOrEmpty(item.CdrPath))
+                folder = Path.GetDirectoryName(item.CdrPath);
+
+            if (Directory.Exists(folder))
+                Process.Start(folder);
+        }
+
+        private void CopySelectedPath()
+        {
+            var item = SelectedItem();
+            if (item != null && !string.IsNullOrEmpty(item.CdrPath))
+            {
+                Clipboard.SetText(item.CdrPath);
+                status.Text = "Copied: " + item.CdrPath;
+            }
+        }
+
+        private void OnGridDoubleClick(object sender, EventArgs e)
+        {
+            OpenSelectedCdr();
         }
 
         private void OnDragEnter(object sender, DragEventArgs e)
