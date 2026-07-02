@@ -313,11 +313,7 @@ namespace CDRPhotoMatchPro.Core
 
             WriteLog("Document.Export X4 start filter=" + filter);
 
-            dynamic exp = doc.Export(
-                outFile,
-                filter,
-                1
-            );
+            dynamic exp = doc.Export(outFile, filter, 1);
 
             try { exp.Finish(); } catch { }
 
@@ -340,11 +336,24 @@ namespace CDRPhotoMatchPro.Core
 
     return false;
 }
-            catch
-            {
-                return false;
-            }
-        }
+
+private void ClearSelection(dynamic doc)
+{
+    try { doc.ClearSelection(); } catch { }
+    try { _app.ActiveDocument.ClearSelection(); } catch { }
+}
+
+private bool IsValidImage(string path)
+{
+    try
+    {
+        return File.Exists(path) && new FileInfo(path).Length > 1000;
+    }
+    catch
+    {
+        return false;
+    }
+}
 
         private void WriteLog(string text)
         {
