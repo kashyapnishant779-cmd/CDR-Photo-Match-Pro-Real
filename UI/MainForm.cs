@@ -219,70 +219,73 @@ namespace CDRPhotoMatchPro.UI
                 }
             }
         }
-
         private void SearchImage()
+{
+    if (!File.Exists(imagePath.Text))
+    {
+        MessageBox.Show("Select a valid image.");
+        return;
+    }
+
+    status.Text = "Searching...";
+    Application.DoEvents();
+
+    double threshold;
+    if (!double.TryParse(thresholdBox.Text, out threshold))
+        threshold = 20;
+
+    var matcher = new ImageMatcher();
+    var query = matcher.ExtractDescriptorBytes(imagePath.Text);
+    var results = new List<MatchResult>();
+
+    using (var db = new Database(DbPath))
+    {
+        foreach (var d in db.LoadDesigns())
         {
-            if (!File.Exists(imagePath.Text))
+            var score = matcher.Compare(query, d.Descriptor);
+
+            if (score > 1)
             {
-                MessageBox.Show("Select a valid image.");
-                return;
-            }
-
-            status.Text = "Searching...";
-            Application.DoEvents();
-
-            double threshold;
-            if (!double.TryParse(thresholdBox.Text, out threshold))
-                threshold = 45;
-
-            var matcher = new ImageMatcher();
-            var query = matcher.ExtractDescriptorBytes(imagePath.Text);
-            var results = new List<MatchResult>();
-
-            using (var db = new Database(DbPath))
-            {
-                foreach (var d in db.LoadDesigns())
+                results.Add(new MatchResult
                 {
-                    var score = matcher.Compare(query, d.Descriptor);
-
-                    if (score >= threshold)
-                    {
-                        results.Add(new MatchResult
-                        {
-                            MatchPercent = Math.Round(score, 2),
-                            CdrFileName = d.FileName,
-                            FullFolderPath = d.FolderPath,
-                            CdrPath = d.CdrPath,
-                            PageNumber = d.PageNumber,
-                            DesignNumber = d.DesignNumber,
-                            ObjectNumber = d.DesignNumber,
-                            ThumbnailPath = d.ThumbnailPath,
-                            PngPath = d.PngPath,
-                            ExportMode = d.ExportMode,
-                            ShapeCount = d.ShapeCount
-                        });
-                    }
-                }
-            }
-
-            var top = results
-                .OrderByDescending(x => x.MatchPercent)
-                .Take(50)
-                .ToList();
-
-            grid.DataSource = top;
-
-            if (top.Count == 0)
-            {
-                status.Text = "NEW DESIGN REQUIRED - no good match found above " + threshold + "%";
-                preview.ImageLocation = imagePath.Text;
-            }
-            else
-            {
-                status.Text = "Best match: " + top[0].MatchPercent + "% | " + top[0].CdrPath + " | Page " + top[0].PageNumber + " | Design " + top[0].DesignNumber;
+                    MatchPercent = Math.Round(score, 2),
+                    CdrFileName = d.FileName,
+                    FullFolderPath = d.FolderPath,
+                    CdrPath = d.CdrPath,
+                    PageNumber = d.PageNumber,
+                    DesignNumber = d.DesignNumber,
+                    ObjectNumber = d.DesignNumber,
+                    ThumbnailPath = d.ThumbnailPath,
+                    PngPath = d.PngPath,
+                    ExportMode = d.ExportMode,
+                    ShapeCount = d.ShapeCount
+                });
             }
         }
+    }
 
+    var top = results
+        .OrderByDescending(x => x.MatchPercent)
+        .Take(50)
+        .ToList();
+
+    grid.DataSource = top;
+
+    if (top.Count == 0)
+    {
+        status.Text = "NO RESULT - index empty or descriptor mismatch";
+        preview.ImageLocation = imagePath.Text;
+    }
+    else if (top[0].MatchPercent < threshold)
+    {
+        status.Text = "POSSIBLE MATCH ONLY: " + top[0].MatchPercent + "% | " + top[0].CdrPath + " | Page " + top[0].PageNumber + " | Design " + top[0].DesignNumber;
+    }
+    else
+    {
+        status.Text = "Best match: " + top[0].MatchPercent + "% | " + top[0].CdrPath + " | Page " + top[0].PageNumber + " | Design " + top[0].DesignNumber;
+    }
+}
+        
         private async void StartScan(bool full)
         {
             if (!Directory.Exists(scanRoot.Text))
