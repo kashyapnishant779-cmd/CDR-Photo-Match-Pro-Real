@@ -243,12 +243,19 @@ namespace CDRPhotoMatchPro.UI
         foreach (var d in db.LoadDesigns())
         {
             var score = matcher.Compare(query, d.Descriptor);
+if (d.ExportMode == "FULL-PAGE-HD")
+    score += 12;
 
+if (d.ExportMode == "GROUP-HD")
+    score += 6;
+
+if (d.ExportMode == "OBJECT-HD")
+    score -= 4;
             if (score > 1)
             {
                 results.Add(new MatchResult
                 {
-                    MatchPercent = Math.Round(score, 2),
+                                 MatchPercent = Math.Round(score, 2),
                     CdrFileName = d.FileName,
                     FullFolderPath = d.FolderPath,
                     CdrPath = d.CdrPath,
