@@ -301,63 +301,45 @@ namespace CDRPhotoMatchPro.Core
             }
         }
 
-        private bool ExportCurrentPageBitmapX4(dynamic doc, string outFile)
+       private bool ExportCurrentPageBitmapX4(dynamic doc, string outFile)
+{
+    int[] filters = new int[] { 772, 774 };
+
+    foreach (int filter in filters)
+    {
+        try
         {
-            int[] filters = new int[] { 772, 774 };
+            try { if (File.Exists(outFile)) File.Delete(outFile); } catch { }
 
-            foreach (int filter in filters)
+            WriteLog("Document.Export X4 start filter=" + filter);
+
+            dynamic exp = doc.Export(
+                outFile,
+                filter,
+                1
+            );
+
+            try { exp.Finish(); } catch { }
+
+            Application.DoEvents();
+            Thread.Sleep(2000);
+
+            if (IsValidImage(outFile))
             {
-                try
-                {
-                    try { if (File.Exists(outFile)) File.Delete(outFile); } catch { }
-
-                    WriteLog("ExportBitmap X4 EXACT start filter=" + filter);
-
-                    dynamic exp = doc.ExportBitmap(
-                        outFile,
-                        filter,
-                        1,
-                        4,
-                        1200,
-                        1200,
-                        300,
-                        300
-                    );
-
-                    try { exp.Finish(); } catch { }
-
-                    Application.DoEvents();
-                    Thread.Sleep(2000);
-
-                    if (IsValidImage(outFile))
-                    {
-                        WriteLog("ExportBitmap X4 EXACT OK: " + outFile);
-                        return true;
-                    }
-
-                    WriteLog("ExportBitmap X4 EXACT invalid image filter=" + filter);
-                }
-                catch (Exception ex)
-                {
-                    WriteLog("ExportBitmap X4 EXACT failed filter=" + filter + " : " + ex);
-                }
+                WriteLog("Document.Export X4 OK: " + outFile);
+                return true;
             }
 
-            return false;
+            WriteLog("Document.Export X4 invalid image filter=" + filter);
         }
-
-        private void ClearSelection(dynamic doc)
+        catch (Exception ex)
         {
-            try { doc.ClearSelection(); } catch { }
-            try { _app.ActiveDocument.ClearSelection(); } catch { }
+            WriteLog("Document.Export X4 failed filter=" + filter + " : " + ex);
         }
+    }
 
-        private bool IsValidImage(string path)
-        {
-            try
-            {
-                return File.Exists(path) && new FileInfo(path).Length > 1000;
-            }
+    return false;
+}
             catch
             {
                 return false;
