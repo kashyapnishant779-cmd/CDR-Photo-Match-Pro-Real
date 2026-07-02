@@ -7,7 +7,7 @@ namespace CDRPhotoMatchPro.Imaging
 {
     public sealed class ImageMatcher
     {
-        private const int N = 64;
+        private const int N = 96;
 
         public byte[] ExtractDescriptorBytes(string imagePath)
         {
@@ -15,24 +15,12 @@ namespace CDRPhotoMatchPro.Imaging
                 throw new FileNotFoundException("Image not found", imagePath);
 
             using (var original = new Bitmap(imagePath))
-            using (var cropped = CropImportantArea(original))
+            using (var cropped = CropCenterImportantArea(original))
             using (var normalized = NormalizeToSquare(cropped, N))
             {
-                byte[] data = new byte[N * N];
-
-                for (int y = 0; y < N; y++)
-                {
-                    for (int x = 0; x < N; x++)
-                    {
-                        Color c = normalized.GetPixel(x, y);
-                        int gray = (c.R + c.G + c.B) / 3;
-
-                        // WhatsApp/photo blur ke liye thoda soft threshold.
-                        data[y * N + x] = (byte)(gray < 200 ? 0 : 255);
-                    }
-                }
-
-                return data;
+                byte[] gray = ToGray(normalized);
+                byte[] edge = EdgeDescriptor(gray, N, N);
+                return edge;
             }
         }
 
@@ -65,27 +53,87 @@ namespace CDRPhotoMatchPro.Imaging
 
         private double CompareSame(byte[] q, byte[] d)
         {
-            int sameDark = 0;
-            int queryDark = 0;
-            int indexedDark = 0;
+            int inter = 0;
+            int union = 0;
+            int qCount = 0;
+            int dCount = 0;
 
             for (int i = 0; i < q.Length; i++)
             {
-                bool qDark = q[i] < 128;
-                bool dDark = d[i] < 128;
+                bool qe = q[i] > 0;
+                bool de = d[i] > 0;
 
-                if (qDark) queryDark++;
-                if (dDark) indexedDark++;
-                if (qDark && dDark) sameDark++;
+                if (qe) qCount++;
+                if (de) dCount++;
+
+                if (qe && de) inter++;
+                if (qe || de) union++;
             }
 
-            if (queryDark == 0 || indexedDark == 0)
+            if (qCount < 10 || dCount < 10 || union == 0)
                 return 0;
 
-            double a = sameDark * 100.0 / queryDark;
-            double b = sameDark * 100.0 / indexedDark;
+            double jaccard = inter * 100.0 / union;
 
-            return (a + b) / 2.0;
+            double densityRatio = Math.Min(qCount, dCount) * 1.0 / Math.Max(qCount, dCount);
+            double densityPenalty = densityRatio * 100.0;
+
+            return (jaccard * 0.75) + (densityPenalty * 0.25);
+        }
+
+        private Bitmap CropCenterImportantArea(Bitmap src)
+        {
+            // Customer photo me finger/jeans aa jate hain.
+            // Isliye pehle center area pe focus.
+            int cx1 = src.Width / 8;
+            int cy1 = src.Height / 8;
+            int cx2 = src.Width - cx1;
+            int cy2 = src.Height - cy1;
+
+            int minX = src.Width;
+            int minY = src.Height;
+            int maxX = 0;
+            int maxY = 0;
+
+            for (int y = cy1; y < cy2; y += 2)
+            {
+                for (int x = cx1; x < cx2; x += 2)
+                {
+                    Color c = src.GetPixel(x, y);
+                    int gray = (c.R + c.G + c.B) / 3;
+
+                    // Very dark + very bright contrast edges pakdo,
+                    // normal skin/jeans ko ignore karne ki koshish.
+                    if (gray < 80 || gray > 235)
+                    {
+                        if (x < minX) minX = x;
+                        if (y < minY) minY = y;
+                        if (x > maxX) maxX = x;
+                        if (y > maxY) maxY = y;
+                    }
+                }
+            }
+
+            if (maxX <= minX || maxY <= minY)
+            {
+                Rectangle center = new Rectangle(
+                    src.Width / 4,
+                    src.Height / 4,
+                    src.Width / 2,
+                    src.Height / 2
+                );
+
+                return src.Clone(center, src.PixelFormat);
+            }
+
+            int pad = 18;
+            minX = Math.Max(0, minX - pad);
+            minY = Math.Max(0, minY - pad);
+            maxX = Math.Min(src.Width - 1, maxX + pad);
+            maxY = Math.Min(src.Height - 1, maxY + pad);
+
+            Rectangle rect = new Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1);
+            return src.Clone(rect, src.PixelFormat);
         }
 
         private Bitmap NormalizeToSquare(Bitmap src, int size)
@@ -100,8 +148,8 @@ namespace CDRPhotoMatchPro.Imaging
                 g.PixelOffsetMode = PixelOffsetMode.HighQuality;
 
                 double scale = Math.Min(
-                    (size - 4) / (double)src.Width,
-                    (size - 4) / (double)src.Height
+                    (size - 8) / (double)src.Width,
+                    (size - 8) / (double)src.Height
                 );
 
                 int w = Math.Max(1, (int)Math.Round(src.Width * scale));
@@ -116,49 +164,48 @@ namespace CDRPhotoMatchPro.Imaging
             return dst;
         }
 
-        private Bitmap CropImportantArea(Bitmap src)
+        private byte[] ToGray(Bitmap bmp)
         {
-            int minX = src.Width;
-            int minY = src.Height;
-            int maxX = 0;
-            int maxY = 0;
+            byte[] data = new byte[N * N];
 
-            for (int y = 0; y < src.Height; y += 2)
+            for (int y = 0; y < N; y++)
             {
-                for (int x = 0; x < src.Width; x += 2)
+                for (int x = 0; x < N; x++)
                 {
-                    Color c = src.GetPixel(x, y);
-                    int gray = (c.R + c.G + c.B) / 3;
-
-                    // Background white/light hota hai, design dark hoti hai.
-                    if (gray < 220)
-                    {
-                        if (x < minX) minX = x;
-                        if (y < minY) minY = y;
-                        if (x > maxX) maxX = x;
-                        if (y > maxY) maxY = y;
-                    }
+                    Color c = bmp.GetPixel(x, y);
+                    data[y * N + x] = (byte)((c.R + c.G + c.B) / 3);
                 }
             }
 
-            if (maxX <= minX || maxY <= minY)
-                return new Bitmap(src);
+            return data;
+        }
 
-            int pad = 12;
+        private byte[] EdgeDescriptor(byte[] g, int w, int h)
+        {
+            byte[] e = new byte[w * h];
 
-            minX = Math.Max(0, minX - pad);
-            minY = Math.Max(0, minY - pad);
-            maxX = Math.Min(src.Width - 1, maxX + pad);
-            maxY = Math.Min(src.Height - 1, maxY + pad);
+            for (int y = 1; y < h - 1; y++)
+            {
+                for (int x = 1; x < w - 1; x++)
+                {
+                    int i = y * w + x;
 
-            Rectangle rect = new Rectangle(
-                minX,
-                minY,
-                maxX - minX + 1,
-                maxY - minY + 1
-            );
+                    int gx =
+                        -g[(y - 1) * w + (x - 1)] + g[(y - 1) * w + (x + 1)] +
+                        -2 * g[y * w + (x - 1)] + 2 * g[y * w + (x + 1)] +
+                        -g[(y + 1) * w + (x - 1)] + g[(y + 1) * w + (x + 1)];
 
-            return src.Clone(rect, src.PixelFormat);
+                    int gy =
+                        -g[(y - 1) * w + (x - 1)] - 2 * g[(y - 1) * w + x] - g[(y - 1) * w + (x + 1)] +
+                         g[(y + 1) * w + (x - 1)] + 2 * g[(y + 1) * w + x] + g[(y + 1) * w + (x + 1)];
+
+                    int mag = Math.Abs(gx) + Math.Abs(gy);
+
+                    e[i] = (byte)(mag > 85 ? 255 : 0);
+                }
+            }
+
+            return e;
         }
 
         private byte[] Rotate90(byte[] src)
