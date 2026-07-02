@@ -1,361 +1,390 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
-using System.Drawing.Drawing2D;
 using System.IO;
+using OpenCvSharp;
+using OpenCvSharp.Extensions;
 
-namespace CDRPhotoMatchPro.Imaging
+namespace CDRPhotoMatchPro.Core
 {
-    public sealed class ImageMatcher
+    public static class ImageMatcher
     {
-        private const int N = 128;
-        private const int HIST = 32;
-        private const int LEN = 4 + (N * N) + (HIST * 2) + 8;
-
-        public byte[] ExtractDescriptorBytes(string imagePath)
+        public static double Compare(string queryImagePath, string dbImagePath)
         {
-            if (!File.Exists(imagePath))
-                throw new FileNotFoundException("Image not found", imagePath);
+            return CompareImages(queryImagePath, dbImagePath);
+        }
 
-            using (Bitmap original = new Bitmap(imagePath))
-            using (Bitmap crop = CropMainObject(original))
-            using (Bitmap norm = Normalize(crop, N))
+        public static double CompareImages(string queryImagePath, string dbImagePath)
+        {
+            if (!File.Exists(queryImagePath) || !File.Exists(dbImagePath))
+                return 0;
+
+            using (Mat q0 = Cv2.ImRead(queryImagePath, ImreadModes.Color))
+            using (Mat d0 = Cv2.ImRead(dbImagePath, ImreadModes.Color))
             {
-                byte[] mask = MakeMask(norm);
-                byte[] edge = MakeEdge(mask);
+                if (q0.Empty() || d0.Empty())
+                    return 0;
 
-                byte[] desc = new byte[LEN];
-                desc[0] = (byte)'I';
-                desc[1] = (byte)'M';
-                desc[2] = (byte)'G';
-                desc[3] = 5;
-
-                Buffer.BlockCopy(edge, 0, desc, 4, N * N);
-
-                byte[] hx = HistX(edge);
-                byte[] hy = HistY(edge);
-
-                Buffer.BlockCopy(hx, 0, desc, 4 + N * N, HIST);
-                Buffer.BlockCopy(hy, 0, desc, 4 + N * N + HIST, HIST);
-
-                int meta = 4 + N * N + HIST * 2;
-
-                desc[meta + 0] = (byte)Math.Min(255, Count(edge) * 255 / (N * N));
-                desc[meta + 1] = (byte)Math.Min(255, Count(mask) * 255 / (N * N));
-                desc[meta + 2] = (byte)Math.Min(255, Aspect(mask) * 40);
-                desc[meta + 3] = (byte)Math.Min(255, CenterMassX(mask) * 255 / N);
-                desc[meta + 4] = (byte)Math.Min(255, CenterMassY(mask) * 255 / N);
-
-                return desc;
-            }
-        }
-
-        public double Compare(byte[] q, byte[] d)
-        {
-            if (q == null || d == null) return 0;
-            if (q.Length != LEN || d.Length != LEN) return 0;
-            if (q[3] != d[3]) return 0;
-
-            byte[] qe = Slice(q, 4, N * N);
-            byte[] de = Slice(d, 4, N * N);
-
-            byte[] qx = Slice(q, 4 + N * N, HIST);
-            byte[] dx = Slice(d, 4 + N * N, HIST);
-            byte[] qy = Slice(q, 4 + N * N + HIST, HIST);
-            byte[] dy = Slice(d, 4 + N * N + HIST, HIST);
-
-            int meta = 4 + N * N + HIST * 2;
-
-            double best = 0;
-            best = Math.Max(best, CompareOne(qe, de, qx, dx, qy, dy, q, d, meta));
-            best = Math.Max(best, CompareOne(Rotate90(qe), de, qy, dx, qx, dy, q, d, meta));
-            best = Math.Max(best, CompareOne(Rotate180(qe), de, Reverse(qx), dx, Reverse(qy), dy, q, d, meta));
-            best = Math.Max(best, CompareOne(Rotate270(qe), de, qy, dx, qx, dy, q, d, meta));
-
-            if (best < 0) best = 0;
-            if (best > 100) best = 100;
-            return best;
-        }
-
-        public Size ReadSize(string imagePath)
-        {
-            using (var img = Image.FromFile(imagePath))
-                return img.Size;
-        }
-
-        private double CompareOne(byte[] qe, byte[] de, byte[] qx, byte[] dx, byte[] qy, byte[] dy, byte[] q, byte[] d, int meta)
-        {
-            double edge = ShiftBest(qe, de);
-            double hx = HistScore(qx, dx);
-            double hy = HistScore(qy, dy);
-
-            double density = 100 - Math.Abs(q[meta] - d[meta]) * 100.0 / 255.0;
-            double fill = 100 - Math.Abs(q[meta + 1] - d[meta + 1]) * 100.0 / 255.0;
-            double aspect = 100 - Math.Abs(q[meta + 2] - d[meta + 2]) * 100.0 / 255.0;
-
-            if (density < 0) density = 0;
-            if (fill < 0) fill = 0;
-            if (aspect < 0) aspect = 0;
-
-            return edge * 0.45 + hx * 0.18 + hy * 0.18 + density * 0.08 + fill * 0.05 + aspect * 0.06;
-        }
-
-        private double ShiftBest(byte[] a, byte[] b)
-        {
-            double best = 0;
-            int[] shifts = { -10, -6, -3, 0, 3, 6, 10 };
-
-            foreach (int dy in shifts)
-                foreach (int dx in shifts)
-                    best = Math.Max(best, Jaccard(a, b, dx, dy));
-
-            return best;
-        }
-
-        private double Jaccard(byte[] a, byte[] b, int dx, int dy)
-        {
-            int inter = 0, union = 0;
-
-            for (int y = 0; y < N; y++)
-            {
-                int yy = y + dy;
-                if (yy < 0 || yy >= N) continue;
-
-                for (int x = 0; x < N; x++)
+                using (Mat q = PreprocessJewellery(q0))
+                using (Mat d = PreprocessJewellery(d0))
                 {
-                    int xx = x + dx;
-                    if (xx < 0 || xx >= N) continue;
+                    double best = 0;
 
-                    bool aa = a[y * N + x] > 0;
-                    bool bb = b[yy * N + xx] > 0;
+                    int[] angles = { 0, 90, 180, 270 };
 
-                    if (aa && bb) inter++;
-                    if (aa || bb) union++;
-                }
-            }
-
-            if (union < 20) return 0;
-            return inter * 100.0 / union * 2.2;
-        }
-
-        private Bitmap CropMainObject(Bitmap src)
-        {
-            int minX = src.Width, minY = src.Height, maxX = 0, maxY = 0;
-
-            for (int y = 0; y < src.Height; y += 3)
-            {
-                for (int x = 0; x < src.Width; x += 3)
-                {
-                    Color c = src.GetPixel(x, y);
-                    int gray = (c.R + c.G + c.B) / 3;
-                    int max = Math.Max(c.R, Math.Max(c.G, c.B));
-                    int min = Math.Min(c.R, Math.Min(c.G, c.B));
-                    int sat = max - min;
-
-                    bool blackVector = gray < 180;
-                    bool gold = c.R > 120 && c.G > 85 && c.B < 100;
-                    bool silver = gray > 125 && sat < 80;
-                    bool whiteStone = gray > 200 && sat < 70;
-
-                    if (blackVector || gold || silver || whiteStone)
+                    foreach (int angle in angles)
                     {
-                        if (x < minX) minX = x;
-                        if (y < minY) minY = y;
-                        if (x > maxX) maxX = x;
-                        if (y > maxY) maxY = y;
+                        using (Mat qr = Rotate(q, angle))
+                        {
+                            double score = FinalScore(qr, d);
+                            if (score > best) best = score;
+                        }
                     }
+
+                    if (best < 0) best = 0;
+                    if (best > 100) best = 100;
+
+                    return Math.Round(best, 2);
                 }
             }
-
-            if (maxX <= minX || maxY <= minY)
-                return new Bitmap(src);
-
-            int pad = 25;
-            minX = Math.Max(0, minX - pad);
-            minY = Math.Max(0, minY - pad);
-            maxX = Math.Min(src.Width - 1, maxX + pad);
-            maxY = Math.Min(src.Height - 1, maxY + pad);
-
-            return src.Clone(new Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1), src.PixelFormat);
         }
 
-        private Bitmap Normalize(Bitmap src, int size)
+        private static Mat PreprocessJewellery(Mat src)
         {
-            Bitmap dst = new Bitmap(size, size);
-            using (Graphics g = Graphics.FromImage(dst))
+            Mat resized = ResizeMax(src, 700);
+
+            Mat gray = new Mat();
+            Cv2.CvtColor(resized, gray, ColorConversionCodes.BGR2GRAY);
+
+            Cv2.EqualizeHist(gray, gray);
+            Cv2.GaussianBlur(gray, gray, new OpenCvSharp.Size(3, 3), 0);
+
+            Mat edges = new Mat();
+            Cv2.Canny(gray, edges, 45, 130);
+
+            Mat kernel = Cv2.GetStructuringElement(MorphShapes.Ellipse, new OpenCvSharp.Size(5, 5));
+            Cv2.Dilate(edges, edges, kernel);
+            Cv2.MorphologyEx(edges, edges, MorphTypes.Close, kernel);
+
+            Mat mask = RemoveBackgroundByContours(edges, resized.Size());
+
+            Mat output = new Mat();
+            Cv2.BitwiseAnd(resized, resized, output, mask);
+
+            gray.Dispose();
+            edges.Dispose();
+            kernel.Dispose();
+            mask.Dispose();
+            resized.Dispose();
+
+            return output;
+        }
+
+        private static Mat RemoveBackgroundByContours(Mat edge, OpenCvSharp.Size size)
+        {
+            Mat mask = Mat.Zeros(size, MatType.CV_8UC1);
+
+            OpenCvSharp.Point[][] contours;
+            HierarchyIndex[] hierarchy;
+
+            Cv2.FindContours(edge.Clone(), out contours, out hierarchy,
+                RetrievalModes.External, ContourApproximationModes.ApproxSimple);
+
+            if (contours == null || contours.Length == 0)
+                return edge.Clone();
+
+            double imgArea = size.Width * size.Height;
+
+            foreach (var c in contours)
             {
-                g.Clear(Color.White);
-                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                double scale = Math.Min((size - 12) / (double)src.Width, (size - 12) / (double)src.Height);
-                int w = Math.Max(1, (int)(src.Width * scale));
-                int h = Math.Max(1, (int)(src.Height * scale));
-                g.DrawImage(src, (size - w) / 2, (size - h) / 2, w, h);
+                double area = Cv2.ContourArea(c);
+                if (area < imgArea * 0.002) continue;
+                if (area > imgArea * 0.85) continue;
+
+                Rect r = Cv2.BoundingRect(c);
+
+                double ratio = r.Width / (double)Math.Max(1, r.Height);
+
+                if (ratio > 8 || ratio < 0.12)
+                    continue;
+
+                Cv2.DrawContours(mask, new[] { c }, -1, Scalar.White, -1);
             }
-            return dst;
+
+            Mat kernel = Cv2.GetStructuringElement(MorphShapes.Ellipse, new OpenCvSharp.Size(9, 9));
+            Cv2.MorphologyEx(mask, mask, MorphTypes.Close, kernel);
+            Cv2.Dilate(mask, mask, kernel);
+
+            kernel.Dispose();
+            return mask;
         }
 
-        private byte[] MakeMask(Bitmap bmp)
+        private static double FinalScore(Mat query, Mat candidate)
         {
-            byte[] m = new byte[N * N];
-
-            for (int y = 0; y < N; y++)
+            using (Mat qGray = ToGray(query))
+            using (Mat cGray = ToGray(candidate))
+            using (Mat qEdge = Edge(qGray))
+            using (Mat cEdge = Edge(cGray))
             {
-                for (int x = 0; x < N; x++)
+                double orb = OrbScore(qGray, cGray);
+                double contour = ContourScore(qEdge, cEdge);
+                double hist = HistogramScore(qGray, cGray);
+                double aspect = AspectScore(qEdge, cEdge);
+                double edge = EdgeScore(qEdge, cEdge);
+                double center = CenterMassScore(qEdge, cEdge);
+
+                double final =
+                    orb * 0.30 +
+                    contour * 0.25 +
+                    edge * 0.18 +
+                    hist * 0.12 +
+                    aspect * 0.10 +
+                    center * 0.05;
+
+                if (orb < 12 && contour < 20 && edge < 18)
+                    final *= 0.45;
+
+                if (aspect < 25)
+                    final *= 0.65;
+
+                return final;
+            }
+        }
+
+        private static double OrbScore(Mat a, Mat b)
+        {
+            try
+            {
+                var orb = ORB.Create(800);
+
+                KeyPoint[] kp1, kp2;
+                Mat des1 = new Mat();
+                Mat des2 = new Mat();
+
+                orb.DetectAndCompute(a, null, out kp1, des1);
+                orb.DetectAndCompute(b, null, out kp2, des2);
+
+                if (des1.Empty() || des2.Empty() || kp1.Length < 5 || kp2.Length < 5)
+                    return 0;
+
+                var matcher = new BFMatcher(NormTypes.Hamming, false);
+                var matches = matcher.KnnMatch(des1, des2, 2);
+
+                int good = 0;
+                foreach (var m in matches)
                 {
-                    Color c = bmp.GetPixel(x, y);
-                    int gray = (c.R + c.G + c.B) / 3;
-                    int max = Math.Max(c.R, Math.Max(c.G, c.B));
-                    int min = Math.Min(c.R, Math.Min(c.G, c.B));
-                    int sat = max - min;
+                    if (m.Length >= 2 && m[0].Distance < 0.75 * m[1].Distance)
+                        good++;
+                }
 
-                    bool vector = gray < 210;
-                    bool gold = c.R > 115 && c.G > 75 && c.B < 120;
-                    bool silver = gray > 120 && sat < 90;
-                    bool stone = gray > 200 && sat < 90;
+                double baseScore = good * 100.0 / Math.Max(20, Math.Min(kp1.Length, kp2.Length));
 
-                    if (vector || gold || silver || stone)
-                        m[y * N + x] = 255;
+                des1.Dispose();
+                des2.Dispose();
+                orb.Dispose();
+                matcher.Dispose();
+
+                return Clamp(baseScore * 1.6);
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        private static double ContourScore(Mat aEdge, Mat bEdge)
+        {
+            var ca = BiggestContour(aEdge);
+            var cb = BiggestContour(bEdge);
+
+            if (ca == null || cb == null)
+                return 0;
+
+            double diff = Cv2.MatchShapes(ca, cb, ShapeMatchModes.I1, 0);
+            double score = 100.0 / (1.0 + diff * 25.0);
+
+            return Clamp(score);
+        }
+
+        private static double HistogramScore(Mat a, Mat b)
+        {
+            Mat ha = new Mat();
+            Mat hb = new Mat();
+
+            Cv2.CalcHist(new[] { a }, new[] { 0 }, null, ha, 1, new[] { 64 }, new Rangef[] { new Rangef(0, 256) });
+            Cv2.CalcHist(new[] { b }, new[] { 0 }, null, hb, 1, new[] { 64 }, new Rangef[] { new Rangef(0, 256) });
+
+            Cv2.Normalize(ha, ha, 0, 1, NormTypes.MinMax);
+            Cv2.Normalize(hb, hb, 0, 1, NormTypes.MinMax);
+
+            double corr = Cv2.CompareHist(ha, hb, HistCompMethods.Correl);
+            ha.Dispose();
+            hb.Dispose();
+
+            return Clamp((corr + 1) * 50);
+        }
+
+        private static double AspectScore(Mat aEdge, Mat bEdge)
+        {
+            Rect ra = ObjectRect(aEdge);
+            Rect rb = ObjectRect(bEdge);
+
+            if (ra.Width <= 0 || rb.Width <= 0)
+                return 0;
+
+            double ar1 = ra.Width / (double)Math.Max(1, ra.Height);
+            double ar2 = rb.Width / (double)Math.Max(1, rb.Height);
+
+            double diff = Math.Abs(ar1 - ar2) / Math.Max(ar1, ar2);
+            return Clamp(100 - diff * 100);
+        }
+
+        private static double EdgeScore(Mat aEdge, Mat bEdge)
+        {
+            Mat ar = new Mat();
+            Mat br = new Mat();
+
+            Cv2.Resize(aEdge, ar, new OpenCvSharp.Size(256, 256));
+            Cv2.Resize(bEdge, br, new OpenCvSharp.Size(256, 256));
+
+            Mat inter = new Mat();
+            Mat union = new Mat();
+
+            Cv2.BitwiseAnd(ar, br, inter);
+            Cv2.BitwiseOr(ar, br, union);
+
+            double i = Cv2.CountNonZero(inter);
+            double u = Cv2.CountNonZero(union);
+
+            ar.Dispose();
+            br.Dispose();
+            inter.Dispose();
+            union.Dispose();
+
+            if (u <= 0) return 0;
+
+            return Clamp((i / u) * 100.0 * 2.2);
+        }
+
+        private static double CenterMassScore(Mat aEdge, Mat bEdge)
+        {
+            Moments ma = Cv2.Moments(aEdge, true);
+            Moments mb = Cv2.Moments(bEdge, true);
+
+            if (ma.M00 == 0 || mb.M00 == 0)
+                return 0;
+
+            double ax = ma.M10 / ma.M00 / aEdge.Width;
+            double ay = ma.M01 / ma.M00 / aEdge.Height;
+
+            double bx = mb.M10 / mb.M00 / bEdge.Width;
+            double by = mb.M01 / mb.M00 / bEdge.Height;
+
+            double dist = Math.Sqrt(Math.Pow(ax - bx, 2) + Math.Pow(ay - by, 2));
+            return Clamp(100 - dist * 180);
+        }
+
+        private static OpenCvSharp.Point[] BiggestContour(Mat edge)
+        {
+            OpenCvSharp.Point[][] contours;
+            HierarchyIndex[] hierarchy;
+
+            Cv2.FindContours(edge.Clone(), out contours, out hierarchy,
+                RetrievalModes.External, ContourApproximationModes.ApproxSimple);
+
+            if (contours == null || contours.Length == 0)
+                return null;
+
+            double bestArea = 0;
+            OpenCvSharp.Point[] best = null;
+
+            foreach (var c in contours)
+            {
+                double area = Cv2.ContourArea(c);
+                if (area > bestArea)
+                {
+                    bestArea = area;
+                    best = c;
                 }
             }
 
-            return m;
+            return best;
         }
 
-        private byte[] MakeEdge(byte[] m)
+        private static Rect ObjectRect(Mat edge)
         {
-            byte[] e = new byte[N * N];
+            var c = BiggestContour(edge);
+            if (c == null) return new Rect(0, 0, 0, 0);
+            return Cv2.BoundingRect(c);
+        }
 
-            for (int y = 1; y < N - 1; y++)
-                for (int x = 1; x < N - 1; x++)
-                {
-                    int i = y * N + x;
-                    if (m[i] != m[i - 1] || m[i] != m[i + 1] || m[i] != m[i - N] || m[i] != m[i + N])
-                        e[i] = 255;
-                }
+        private static Mat ToGray(Mat src)
+        {
+            Mat gray = new Mat();
 
+            if (src.Channels() == 1)
+                src.CopyTo(gray);
+            else
+                Cv2.CvtColor(src, gray, ColorConversionCodes.BGR2GRAY);
+
+            Cv2.EqualizeHist(gray, gray);
+            return gray;
+        }
+
+        private static Mat Edge(Mat gray)
+        {
+            Mat e = new Mat();
+            Cv2.GaussianBlur(gray, gray, new OpenCvSharp.Size(3, 3), 0);
+            Cv2.Canny(gray, e, 40, 120);
+
+            Mat k = Cv2.GetStructuringElement(MorphShapes.Ellipse, new OpenCvSharp.Size(3, 3));
+            Cv2.MorphologyEx(e, e, MorphTypes.Close, k);
+
+            k.Dispose();
             return e;
         }
 
-        private byte[] HistX(byte[] e)
+        private static Mat ResizeMax(Mat src, int max)
         {
-            byte[] h = new byte[HIST];
-            for (int x = 0; x < N; x++)
-            {
-                int c = 0;
-                for (int y = 0; y < N; y++)
-                    if (e[y * N + x] > 0) c++;
-                h[x * HIST / N] = (byte)Math.Min(255, h[x * HIST / N] + c);
-            }
-            return h;
-        }
+            int w = src.Width;
+            int h = src.Height;
 
-        private byte[] HistY(byte[] e)
-        {
-            byte[] h = new byte[HIST];
-            for (int y = 0; y < N; y++)
-            {
-                int c = 0;
-                for (int x = 0; x < N; x++)
-                    if (e[y * N + x] > 0) c++;
-                h[y * HIST / N] = (byte)Math.Min(255, h[y * HIST / N] + c);
-            }
-            return h;
-        }
+            double scale = Math.Min(max / (double)w, max / (double)h);
+            if (scale >= 1.0)
+                return src.Clone();
 
-        private double HistScore(byte[] a, byte[] b)
-        {
-            int diff = 0, total = 0;
-            for (int i = 0; i < a.Length; i++)
-            {
-                diff += Math.Abs(a[i] - b[i]);
-                total += Math.Max(a[i], b[i]);
-            }
-
-            if (total == 0) return 0;
-            return Math.Max(0, 100 - diff * 100.0 / total);
-        }
-
-        private int Count(byte[] a)
-        {
-            int c = 0;
-            for (int i = 0; i < a.Length; i++)
-                if (a[i] > 0) c++;
-            return c;
-        }
-
-        private int Aspect(byte[] m)
-        {
-            int minX = N, minY = N, maxX = 0, maxY = 0;
-            for (int y = 0; y < N; y++)
-                for (int x = 0; x < N; x++)
-                    if (m[y * N + x] > 0)
-                    {
-                        if (x < minX) minX = x;
-                        if (y < minY) minY = y;
-                        if (x > maxX) maxX = x;
-                        if (y > maxY) maxY = y;
-                    }
-
-            if (maxX <= minX || maxY <= minY) return 1;
-            return Math.Max(1, (maxX - minX + 1) * 10 / Math.Max(1, maxY - minY + 1));
-        }
-
-        private int CenterMassX(byte[] m)
-        {
-            int sum = 0, c = 0;
-            for (int y = 0; y < N; y++)
-                for (int x = 0; x < N; x++)
-                    if (m[y * N + x] > 0) { sum += x; c++; }
-            return c == 0 ? N / 2 : sum / c;
-        }
-
-        private int CenterMassY(byte[] m)
-        {
-            int sum = 0, c = 0;
-            for (int y = 0; y < N; y++)
-                for (int x = 0; x < N; x++)
-                    if (m[y * N + x] > 0) { sum += y; c++; }
-            return c == 0 ? N / 2 : sum / c;
-        }
-
-        private byte[] Slice(byte[] src, int start, int len)
-        {
-            byte[] r = new byte[len];
-            Buffer.BlockCopy(src, start, r, 0, len);
-            return r;
-        }
-
-        private byte[] Reverse(byte[] a)
-        {
-            byte[] r = new byte[a.Length];
-            for (int i = 0; i < a.Length; i++)
-                r[i] = a[a.Length - 1 - i];
-            return r;
-        }
-
-        private byte[] Rotate90(byte[] src)
-        {
-            byte[] dst = new byte[N * N];
-            for (int y = 0; y < N; y++)
-                for (int x = 0; x < N; x++)
-                    dst[x * N + (N - 1 - y)] = src[y * N + x];
+            Mat dst = new Mat();
+            Cv2.Resize(src, dst, new OpenCvSharp.Size((int)(w * scale), (int)(h * scale)));
             return dst;
         }
 
-        private byte[] Rotate180(byte[] src)
+        private static Mat Rotate(Mat src, int angle)
         {
-            byte[] dst = new byte[N * N];
-            for (int i = 0; i < src.Length; i++)
-                dst[src.Length - 1 - i] = src[i];
+            if (angle == 0)
+                return src.Clone();
+
+            Mat dst = new Mat();
+
+            if (angle == 90)
+                Cv2.Rotate(src, dst, RotateFlags.Rotate90Clockwise);
+            else if (angle == 180)
+                Cv2.Rotate(src, dst, RotateFlags.Rotate180);
+            else if (angle == 270)
+                Cv2.Rotate(src, dst, RotateFlags.Rotate90Counterclockwise);
+            else
+                dst = src.Clone();
+
             return dst;
         }
 
-        private byte[] Rotate270(byte[] src)
+        private static double Clamp(double v)
         {
-            byte[] dst = new byte[N * N];
-            for (int y = 0; y < N; y++)
-                for (int x = 0; x < N; x++)
-                    dst[(N - 1 - x) * N + y] = src[y * N + x];
-            return dst;
+            if (double.IsNaN(v) || double.IsInfinity(v))
+                return 0;
+
+            if (v < 0) return 0;
+            if (v > 100) return 100;
+            return v;
         }
     }
 }
