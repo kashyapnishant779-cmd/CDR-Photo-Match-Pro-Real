@@ -246,8 +246,35 @@ namespace CDRPhotoMatchPro.Core
             }
         }
 
-        private void SaveFit(Image source, string outputPath, int maxSize, ImageFormat format)
-        {
+        private void CopyActiveSelection()
+{
+    try
+    {
+        _app.ActiveSelection.Copy();
+        return;
+    }
+    catch { }
+
+    try
+    {
+        _app.ActiveDocument.Selection.Copy();
+        return;
+    }
+    catch { }
+
+    try
+    {
+        _app.ActiveDocument.ActiveSelection.Copy();
+        return;
+    }
+    catch { }
+
+    throw new InvalidOperationException("Active selection copy failed.");
+}
+
+private void SaveFit(Image source, string outputPath, int maxSize, ImageFormat format)
+{
+                
             int sw = source.Width <= 0 ? maxSize : source.Width;
             int sh = source.Height <= 0 ? maxSize : source.Height;
 
