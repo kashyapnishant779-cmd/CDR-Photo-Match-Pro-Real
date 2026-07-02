@@ -36,8 +36,10 @@ namespace CDRPhotoMatchPro.Core
             var results = new List<DesignRecord>();
             Directory.CreateDirectory(cacheRoot);
 
+            CleanOldImages(cacheRoot);
+
             _logFile = Path.Combine(cacheRoot, "export_debug.txt");
-            Log("START HD GROUP ENGINE: " + cdrPath);
+            Log("START COMPLETE HD ENGINE: " + cdrPath);
 
             dynamic doc = null;
 
@@ -55,54 +57,94 @@ namespace CDRPhotoMatchPro.Core
                     int shapeCount = Convert.ToInt32(page.Shapes.Count);
                     Log("Page " + p + " shapes: " + shapeCount);
 
-                    List<List<int>> groups = BuildGroups(page, shapeCount);
-
                     int designNo = 1;
+
+                    // 1) Full page export - koi design miss na ho
+                    try
+                    {
+                        if (SelectAllPageShapes(page, shapeCount))
+                        {
+                            string baseName = SafeName(Path.GetFileNameWithoutExtension(cdrPath)) + "_p" + p + "_full";
+                            string png = Path.Combine(cacheRoot, baseName + "_HD.png");
+                            string thumb = Path.Combine(cacheRoot, baseName + "_thumb.jpg");
+
+                            CopyActiveSelection();
+                            Thread.Sleep(250);
+
+                            if (SaveClipboardArtwork(png, thumb))
+                            {
+                                results.Add(CreateRecord(cdrPath, thumb, png, p, designNo++, "FULL-PAGE-HD", shapeCount));
+                                Log("FULL PAGE OK: " + png);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log("Full page export failed: " + ex.Message);
+                    }
+
+                    // 2) Nearby group export
+                    List<List<int>> groups = BuildGroups(page, shapeCount);
 
                     foreach (var group in groups)
                     {
                         try
                         {
-                            string baseName =
-                                SafeName(Path.GetFileNameWithoutExtension(cdrPath)) +
-                                "_p" + p + "_d" + designNo;
+                            if (group.Count <= 0)
+                                continue;
 
-                            string pngFile = Path.Combine(cacheRoot, baseName + "_HD.png");
-                            string thumbFile = Path.Combine(cacheRoot, baseName + "_thumb.jpg");
+                            if (!SelectGroup(page, group))
+                                continue;
 
-                            SelectGroup(page, group);
-                            Thread.Sleep(150);
+                            string baseName = SafeName(Path.GetFileNameWithoutExtension(cdrPath)) + "_p" + p + "_d" + designNo;
+                            string png = Path.Combine(cacheRoot, baseName + "_HD.png");
+                            string thumb = Path.Combine(cacheRoot, baseName + "_thumb.jpg");
 
-                            page.Shapes[group[0]].Copy();
-                            Log("Copied group page=" + p + " design=" + designNo + " shapes=" + group.Count);
+                            CopyActiveSelection();
+                            Thread.Sleep(250);
 
-                            Thread.Sleep(300);
-
-                            bool ok = SaveClipboardArtwork(pngFile, thumbFile);
-
-                            if (ok && File.Exists(pngFile) && File.Exists(thumbFile))
+                            if (SaveClipboardArtwork(png, thumb))
                             {
-                                results.Add(CreateRecord(
-                                    cdrPath,
-                                    thumbFile,
-                                    pngFile,
-                                    p,
-                                    designNo,
-                                    "HD-GROUP",
-                                    group.Count
-                                ));
-
-                                Log("OK: " + pngFile);
+                                results.Add(CreateRecord(cdrPath, thumb, png, p, designNo, "GROUP-HD", group.Count));
+                                Log("GROUP OK: " + png);
                                 designNo++;
-                            }
-                            else
-                            {
-                                Log("FAILED group page=" + p + " design=" + designNo);
                             }
                         }
                         catch (Exception ex)
                         {
-                            Log("Group failed: " + ex.Message);
+                            Log("Group export failed: " + ex.Message);
+                        }
+                    }
+
+                    // 3) Single object HD fallback - koi object miss na ho
+                    for (int s = 1; s <= shapeCount; s++)
+                    {
+                        try
+                        {
+                            dynamic shape = page.Shapes[s];
+
+                            try { _app.ActiveDocument.ClearSelection(); } catch { }
+
+                            shape.CreateSelection();
+                            Thread.Sleep(120);
+
+                            string baseName = SafeName(Path.GetFileNameWithoutExtension(cdrPath)) + "_p" + p + "_obj" + s;
+                            string png = Path.Combine(cacheRoot, baseName + "_HD.png");
+                            string thumb = Path.Combine(cacheRoot, baseName + "_thumb.jpg");
+
+                            CopySelectedOrShape(shape);
+                            Thread.Sleep(220);
+
+                            if (SaveClipboardArtwork(png, thumb))
+                            {
+                                results.Add(CreateRecord(cdrPath, thumb, png, p, designNo, "OBJECT-HD", 1));
+                                Log("OBJECT OK: " + png);
+                                designNo++;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Log("Object export failed shape=" + s + " : " + ex.Message);
                         }
                     }
                 }
@@ -125,6 +167,48 @@ namespace CDRPhotoMatchPro.Core
             return results;
         }
 
+        private void CleanOldImages(string cacheRoot)
+        {
+            try
+            {
+                foreach (string f in Directory.GetFiles(cacheRoot, "*.jpg"))
+                    File.Delete(f);
+
+                foreach (string f in Directory.GetFiles(cacheRoot, "*.png"))
+                    File.Delete(f);
+            }
+            catch { }
+        }
+
+        private bool SelectAllPageShapes(dynamic page, int shapeCount)
+        {
+            try { _app.ActiveDocument.ClearSelection(); } catch { }
+
+            bool any = false;
+
+            for (int i = 1; i <= shapeCount; i++)
+            {
+                try
+                {
+                    dynamic sh = page.Shapes[i];
+
+                    if (!any)
+                    {
+                        sh.CreateSelection();
+                        any = true;
+                    }
+                    else
+                    {
+                        try { sh.AddToSelection(); }
+                        catch { try { sh.Selected = true; } catch { } }
+                    }
+                }
+                catch { }
+            }
+
+            return any;
+        }
+
         private List<List<int>> BuildGroups(dynamic page, int shapeCount)
         {
             var groups = new List<List<int>>();
@@ -134,85 +218,104 @@ namespace CDRPhotoMatchPro.Core
             {
                 if (used[i]) continue;
 
-                var g = new List<int>();
-                g.Add(i);
+                var group = new List<int>();
+                group.Add(i);
                 used[i] = true;
 
-                RectangleF boxA = GetShapeBox(page.Shapes[i]);
+                RectangleF box = GetShapeBox(page.Shapes[i]);
 
                 for (int j = i + 1; j <= shapeCount; j++)
                 {
                     if (used[j]) continue;
 
-                    RectangleF boxB = GetShapeBox(page.Shapes[j]);
+                    RectangleF b = GetShapeBox(page.Shapes[j]);
 
-                    if (IsNear(boxA, boxB))
+                    if (IsNear(box, b))
                     {
-                        g.Add(j);
+                        group.Add(j);
                         used[j] = true;
-                        boxA = Union(boxA, boxB);
+                        box = Union(box, b);
                     }
                 }
 
-                groups.Add(g);
+                groups.Add(group);
             }
 
             return groups;
         }
 
-        private RectangleF GetShapeBox(dynamic shape)
-        {
-            float x = ToFloat(GetAny(shape, "LeftX", "PositionX", "CenterX"));
-            float y = ToFloat(GetAny(shape, "TopY", "PositionY", "CenterY"));
-            float w = Math.Abs(ToFloat(GetAny(shape, "SizeWidth", "Width")));
-            float h = Math.Abs(ToFloat(GetAny(shape, "SizeHeight", "Height")));
-
-            if (w <= 0) w = 1;
-            if (h <= 0) h = 1;
-
-            return new RectangleF(x, y, w, h);
-        }
-
-        private bool IsNear(RectangleF a, RectangleF b)
-        {
-            RectangleF aa = a;
-            aa.Inflate(Math.Max(a.Width, a.Height) * 0.45f, Math.Max(a.Width, a.Height) * 0.45f);
-            return aa.IntersectsWith(b);
-        }
-
-        private RectangleF Union(RectangleF a, RectangleF b)
-        {
-            float x1 = Math.Min(a.Left, b.Left);
-            float y1 = Math.Min(a.Top, b.Top);
-            float x2 = Math.Max(a.Right, b.Right);
-            float y2 = Math.Max(a.Bottom, b.Bottom);
-            return RectangleF.FromLTRB(x1, y1, x2, y2);
-        }
-
-        private void SelectGroup(dynamic page, List<int> group)
+        private bool SelectGroup(dynamic page, List<int> group)
         {
             try { _app.ActiveDocument.ClearSelection(); } catch { }
 
-            bool first = true;
+            bool any = false;
 
             foreach (int idx in group)
             {
-                dynamic sh = page.Shapes[idx];
+                try
+                {
+                    dynamic sh = page.Shapes[idx];
 
-                if (first)
-                {
-                    sh.CreateSelection();
-                    first = false;
-                }
-                else
-                {
-                    try { sh.AddToSelection(); }
-                    catch
+                    if (!any)
                     {
-                        try { sh.Selected = true; } catch { }
+                        sh.CreateSelection();
+                        any = true;
+                    }
+                    else
+                    {
+                        try { sh.AddToSelection(); }
+                        catch { try { sh.Selected = true; } catch { } }
                     }
                 }
+                catch { }
             }
+
+            return any;
+        }
+
+        private void CopySelectedOrShape(dynamic shape)
+        {
+            try
+            {
+                CopyActiveSelection();
+                return;
+            }
+            catch { }
+
+            try
+            {
+                shape.Copy();
+                return;
+            }
+            catch { }
+
+            throw new InvalidOperationException("Copy failed.");
+        }
+
+        private void CopyActiveSelection()
+        {
+            try
+            {
+                _app.ActiveSelection.Copy();
+                return;
+            }
+            catch { }
+
+            try
+            {
+                _app.ActiveDocument.Selection.Copy();
+                return;
+            }
+            catch { }
+
+            try
+            {
+                _app.ActiveDocument.ActiveSelection.Copy();
+                return;
+            }
+            catch { }
+
+            throw new InvalidOperationException("Active selection copy failed.");
         }
 
         private bool SaveClipboardArtwork(string pngPath, string thumbPath)
@@ -246,35 +349,8 @@ namespace CDRPhotoMatchPro.Core
             }
         }
 
-        private void CopyActiveSelection()
-{
-    try
-    {
-        _app.ActiveSelection.Copy();
-        return;
-    }
-    catch { }
-
-    try
-    {
-        _app.ActiveDocument.Selection.Copy();
-        return;
-    }
-    catch { }
-
-    try
-    {
-        _app.ActiveDocument.ActiveSelection.Copy();
-        return;
-    }
-    catch { }
-
-    throw new InvalidOperationException("Active selection copy failed.");
-}
-
-private void SaveFit(Image source, string outputPath, int maxSize, ImageFormat format)
-{
-                
+        private void SaveFit(Image source, string outputPath, int maxSize, ImageFormat format)
+        {
             int sw = source.Width <= 0 ? maxSize : source.Width;
             int sh = source.Height <= 0 ? maxSize : source.Height;
 
@@ -299,6 +375,37 @@ private void SaveFit(Image source, string outputPath, int maxSize, ImageFormat f
             }
         }
 
+        private RectangleF GetShapeBox(dynamic shape)
+        {
+            float x = ToFloat(GetAny(shape, "LeftX", "PositionX", "CenterX"));
+            float y = ToFloat(GetAny(shape, "TopY", "PositionY", "CenterY"));
+            float w = Math.Abs(ToFloat(GetAny(shape, "SizeWidth", "Width")));
+            float h = Math.Abs(ToFloat(GetAny(shape, "SizeHeight", "Height")));
+
+            if (w <= 0) w = 1;
+            if (h <= 0) h = 1;
+
+            return new RectangleF(x, y, w, h);
+        }
+
+        private bool IsNear(RectangleF a, RectangleF b)
+        {
+            RectangleF aa = a;
+            float pad = Math.Max(a.Width, a.Height) * 0.65f;
+            if (pad < 0.20f) pad = 0.20f;
+            aa.Inflate(pad, pad);
+            return aa.IntersectsWith(b);
+        }
+
+        private RectangleF Union(RectangleF a, RectangleF b)
+        {
+            float x1 = Math.Min(a.Left, b.Left);
+            float y1 = Math.Min(a.Top, b.Top);
+            float x2 = Math.Max(a.Right, b.Right);
+            float y2 = Math.Max(a.Bottom, b.Bottom);
+            return RectangleF.FromLTRB(x1, y1, x2, y2);
+        }
+
         private DesignRecord CreateRecord(string cdrPath, string thumbPath, string pngPath, int pageNo, int designNo, string mode, int shapeCount)
         {
             var rec = (DesignRecord)Activator.CreateInstance(typeof(DesignRecord), true);
@@ -320,13 +427,6 @@ private void SaveFit(Image source, string outputPath, int maxSize, ImageFormat f
         {
             foreach (string name in names)
             {
-                try
-                {
-                    var p = obj.GetType().GetProperty(name);
-                    if (p != null) return p.GetValue(obj, null);
-                }
-                catch { }
-
                 try
                 {
                     return obj.GetType().InvokeMember(name, BindingFlags.GetProperty, null, obj, null);
