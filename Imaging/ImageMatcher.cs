@@ -8,9 +8,46 @@ namespace CDRPhotoMatchPro.Imaging
    public sealed class ImageMatcher
     {
         public static double Compare(string queryImagePath, string dbImagePath)
+           
         {
-            return CompareImages(queryImagePath, dbImagePath);
+           return CompareImages(queryImagePath, dbImagePath);
         }
+      public double Compare(byte[] a, byte[] b)
+  {
+    if (a == null || b == null || a.Length == 0 || b.Length == 0)
+        return 0;
+
+    int len = Math.Min(a.Length, b.Length);
+    int same = 0;
+
+    for (int i = 0; i < len; i++)
+    {
+        int diff = Math.Abs(a[i] - b[i]);
+        if (diff < 35)
+            same++;
+    }
+
+    double score = same * 100.0 / len;
+
+    if (score < 0) score = 0;
+    if (score > 100) score = 100;
+
+    return Math.Round(score, 2);
+}
+
+public OpenCvSharp.Size ReadSize(string imagePath)
+{
+    if (!File.Exists(imagePath))
+        return new OpenCvSharp.Size(0, 0);
+
+    using (Mat img = Cv2.ImRead(imagePath, ImreadModes.Color))
+    {
+        if (img.Empty())
+            return new OpenCvSharp.Size(0, 0);
+
+        return new OpenCvSharp.Size(img.Width, img.Height);
+    }
+}
 
         public static double CompareImages(string queryImagePath, string dbImagePath)
         {
