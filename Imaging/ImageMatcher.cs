@@ -5,7 +5,7 @@ using System.IO;
 using OpenCvSharp;
 namespace CDRPhotoMatchPro.Imaging
 {
-    public static class ImageMatcher
+   public sealed class ImageMatcher
     {
         public static double Compare(string queryImagePath, string dbImagePath)
         {
@@ -46,7 +46,39 @@ namespace CDRPhotoMatchPro.Imaging
                 }
             }
         }
+       public byte[] ExtractDescriptorBytes(string imagePath)
+{
+    if (!File.Exists(imagePath))
+        return new byte[0];
 
+    using (Mat img = Cv2.ImRead(imagePath, ImreadModes.Color))
+    {
+        if (img.Empty())
+            return new byte[0];
+
+        using (Mat processed = PreprocessJewellery(img))
+        using (Mat gray = ToGray(processed))
+        using (Mat edge = Edge(gray))
+        {
+            Mat small = new Mat();
+            Cv2.Resize(edge, small, new OpenCvSharp.Size(128, 128));
+
+            byte[] bytes = new byte[(int)(small.Total() * small.ElemSize())];
+            System.Runtime.InteropServices.Marshal.Copy(
+                small.Data,
+                bytes,
+                0,
+                bytes.Length);
+
+            small.Dispose();
+            return bytes;
+        }
+    }
+}
+       public OpenCvSharp.Size ReadSize(byte[] descriptorBytes)
+{
+    return new OpenCvSharp.Size(128, 128);
+}
         private static Mat PreprocessJewellery(Mat src)
         {
             Mat resized = ResizeMax(src, 700);
