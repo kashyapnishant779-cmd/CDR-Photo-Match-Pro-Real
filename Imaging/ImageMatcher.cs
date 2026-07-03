@@ -3,9 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using OpenCvSharp;
-using OpenCvSharp.Extensions;
-
-namespace CDRPhotoMatchPro.Core
+namespace CDRPhotoMatchPro.Imaging
 {
     public static class ImageMatcher
     {
