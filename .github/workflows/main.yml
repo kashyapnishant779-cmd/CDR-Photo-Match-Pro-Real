@@ -34,4 +34,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: CDRPhotoMatchPro-Debug
-          path: bin/Debug/**
+          path: |
+            bin/Debug/**
+            packages/OpenCvSharp4.runtime.win.4.5.5.20211231/runtimes/**
