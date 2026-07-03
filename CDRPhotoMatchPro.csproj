@@ -41,9 +41,9 @@
     <Reference Include="Microsoft.CSharp" />
 
     <Reference Include="OpenCvSharp">
-      <HintPath>packages\OpenCvSharp4.4.5.5.20211231\lib\netstandard2.0\OpenCvSharp.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
+  <HintPath>packages\OpenCvSharp4.4.3.0.20200524\lib\netstandard2.0\OpenCvSharp.dll</HintPath>
+  <Private>True</Private>
+</Reference>
      
   </ItemGroup>
 
