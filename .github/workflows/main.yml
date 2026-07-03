@@ -36,4 +36,4 @@ jobs:
           name: CDRPhotoMatchPro-Debug
           path: |
             bin/Debug/**
-            packages/OpenCvSharp4.runtime.win.4.5.5.20211231/runtimes/**
+            packages/OpenCvSharp4.runtime.win.4.3.0.20200524/runtimes/**
