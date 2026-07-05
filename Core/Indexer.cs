@@ -107,9 +107,32 @@ namespace CDRPhotoMatchPro.Core
                                             failedCount++;
                                             continue;
                                         }
+                                      var rawSize = matcher.ReadSize(imgPath);
 
+if (design.ExportMode == "OBJECT-HD")
+{
+    if (rawSize.Width < 80 || rawSize.Height < 80)
+    {
+        skippedCount++;
+        continue;
+    }
+
+    double ratio = rawSize.Width / (double)Math.Max(1, rawSize.Height);
+
+    if (ratio > 4.0 || ratio < 0.25)
+    {
+        skippedCount++;
+        continue;
+    }
+}
+
+if (design.ShapeCount <= 1 && design.ExportMode == "OBJECT-HD")
+{
+    skippedCount++;
+    continue;
+}
                                         byte[] desc = matcher.ExtractDescriptorBytes(imgPath);
-                                        var size = matcher.ReadSize(imgPath);
+                                        var size = rawSize;
 
                                         if (desc == null || desc.Length == 0)
                                         {
