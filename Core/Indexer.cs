@@ -126,11 +126,7 @@ if (design.ExportMode == "OBJECT-HD")
     }
 }
 
-if (design.ShapeCount <= 1 && design.ExportMode == "OBJECT-HD")
-{
-    skippedCount++;
-    continue;
-}
+
                                         byte[] desc = matcher.ExtractDescriptorBytes(imgPath);
                                         var size = rawSize;
 
