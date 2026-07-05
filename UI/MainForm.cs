@@ -243,15 +243,15 @@ namespace CDRPhotoMatchPro.UI
         foreach (var d in db.LoadDesigns())
         {
             var score = matcher.Compare(query, d.Descriptor);
-if (d.ExportMode == "FULL-PAGE-HD")
-    score += 12;
+if (d.ExportMode == "OBJECT-HD")
+    score += 18;
 
-if (d.ExportMode == "GROUP-HD")
+else if (d.ExportMode == "GROUP-HD")
     score += 6;
 
-if (d.ExportMode == "OBJECT-HD")
-    score -= 4;
-            if (score > 1)
+else if (d.ExportMode == "FULL-PAGE-HD")
+    score -= 10;
+            if (score >= threshold)
             {
                 results.Add(new MatchResult
                 {
@@ -272,10 +272,11 @@ if (d.ExportMode == "OBJECT-HD")
     }
 
     var top = results
-        .OrderByDescending(x => x.MatchPercent)
-        .Take(50)
-        .ToList();
-
+    .OrderByDescending(x => x.MatchPercent)
+    .ThenByDescending(x => x.ExportMode == "OBJECT-HD")
+    .ThenByDescending(x => x.ShapeCount)
+    .Take(50)
+    .ToList();
     grid.DataSource = top;
 
     if (top.Count == 0)
