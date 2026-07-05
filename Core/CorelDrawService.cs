@@ -122,6 +122,28 @@ namespace CDRPhotoMatchPro.Core
                         try
                         {
                             dynamic shape = page.Shapes[s];
+                            try
+{
+    if (shape.Type == 6)
+        continue;
+}
+catch
+{
+}
+                            RectangleF box = GetShapeBox(shape);
+
+if (box.Width < 2 || box.Height < 2)
+    continue;
+
+float area = box.Width * box.Height;
+
+if (area < 25)
+    continue;
+
+float ratio = box.Width / Math.Max(1, box.Height);
+
+if (ratio > 8f || ratio < 0.12f)
+    continue;
 
                             try { _app.ActiveDocument.ClearSelection(); } catch { }
 
