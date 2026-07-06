@@ -219,7 +219,7 @@ namespace CDRPhotoMatchPro.UI
                 }
             }
         }
-        private void SearchImage()
+       private void SearchImage()
 {
     if (!File.Exists(imagePath.Text))
     {
@@ -232,65 +232,96 @@ namespace CDRPhotoMatchPro.UI
 
     double threshold;
     if (!double.TryParse(thresholdBox.Text, out threshold))
-        threshold = 20;
+        threshold = 35;
 
     var matcher = new ImageMatcher();
     var query = matcher.ExtractDescriptorBytes(imagePath.Text);
+
+    if (query == null || query.Length == 0)
+    {
+        MessageBox.Show("Image descriptor failed.");
+        return;
+    }
+
     var results = new List<MatchResult>();
 
     using (var db = new Database(DbPath))
     {
-        foreach (var d in db.LoadDesigns())
+        var designs = db.LoadDesigns();
+
+        foreach (var d in designs)
         {
-            var score = matcher.Compare(query, d.Descriptor);
-if (d.ExportMode == "OBJECT-HD")
-    score += 18;
+            if (d.Descriptor == null || d.Descriptor.Length == 0)
+                continue;
 
-else if (d.ExportMode == "GROUP-HD")
-    score += 6;
+            double raw = matcher.Compare(query, d.Descriptor);
+            double score = raw;
 
-else if (d.ExportMode == "FULL-PAGE-HD")
-    score -= 10;
-            if (score >= threshold)
+            string mode = d.ExportMode == null ? "" : d.ExportMode.ToUpperInvariant();
+
+            if (mode == "OBJECT-HD")
+                score += 22;
+            else if (mode == "GROUP-HD")
+                score += 4;
+            else if (mode == "FULL-PAGE-HD")
+                score -= 18;
+            else
+                score -= 5;
+
+            if (mode == "FULL-PAGE-HD" && raw < 70)
+                continue;
+
+            if (mode == "GROUP-HD" && raw < 55)
+                continue;
+
+            if (mode == "OBJECT-HD" && raw < 25)
+                continue;
+
+            if (score < threshold)
+                continue;
+
+            if (score > 100)
+                score = 100;
+
+            results.Add(new MatchResult
             {
-                results.Add(new MatchResult
-                {
-                                 MatchPercent = Math.Round(score, 2),
-                    CdrFileName = d.FileName,
-                    FullFolderPath = d.FolderPath,
-                    CdrPath = d.CdrPath,
-                    PageNumber = d.PageNumber,
-                    DesignNumber = d.DesignNumber,
-                    ObjectNumber = d.DesignNumber,
-                    ThumbnailPath = d.ThumbnailPath,
-                    PngPath = d.PngPath,
-                    ExportMode = d.ExportMode,
-                    ShapeCount = d.ShapeCount
-                });
-            }
+                MatchPercent = Math.Round(score, 2),
+                CdrFileName = d.FileName,
+                FullFolderPath = d.FolderPath,
+                CdrPath = d.CdrPath,
+                PageNumber = d.PageNumber,
+                DesignNumber = d.DesignNumber,
+                ObjectNumber = d.DesignNumber,
+                ThumbnailPath = d.ThumbnailPath,
+                PngPath = d.PngPath,
+                ExportMode = d.ExportMode,
+                ShapeCount = d.ShapeCount
+            });
         }
     }
 
     var top = results
-    .OrderByDescending(x => x.MatchPercent)
-    .ThenByDescending(x => x.ExportMode == "OBJECT-HD")
-    .ThenByDescending(x => x.ShapeCount)
-    .Take(50)
-    .ToList();
+        .GroupBy(x => (x.CdrPath ?? "") + "|" + x.PageNumber + "|" + x.DesignNumber + "|" + (x.ExportMode ?? ""))
+        .Select(g => g.OrderByDescending(x => x.MatchPercent).First())
+        .OrderByDescending(x => x.ExportMode == "OBJECT-HD")
+        .ThenByDescending(x => x.MatchPercent)
+        .ThenByDescending(x => x.ExportMode == "GROUP-HD")
+        .Take(50)
+        .ToList();
+
     grid.DataSource = top;
 
     if (top.Count == 0)
     {
-        status.Text = "NO RESULT - index empty or descriptor mismatch";
+        status.Text = "NO RESULT - exact object not found. Try lower threshold or full rescan.";
         preview.ImageLocation = imagePath.Text;
-    }
-    else if (top[0].MatchPercent < threshold)
-    {
-        status.Text = "POSSIBLE MATCH ONLY: " + top[0].MatchPercent + "% | " + top[0].CdrPath + " | Page " + top[0].PageNumber + " | Design " + top[0].DesignNumber;
     }
     else
     {
-        status.Text = "Best match: " + top[0].MatchPercent + "% | " + top[0].CdrPath + " | Page " + top[0].PageNumber + " | Design " + top[0].DesignNumber;
+        status.Text = "Best match: " + top[0].MatchPercent + "% | " +
+                      top[0].CdrPath + " | Page " + top[0].PageNumber +
+                      " | Design " + top[0].DesignNumber +
+                      " | Mode " + top[0].ExportMode;
     }
 }
         
