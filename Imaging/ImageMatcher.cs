@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -8,15 +9,15 @@ namespace CDRPhotoMatchPro.Imaging
 {
     public sealed class ImageMatcher
     {
-        private const int S = 192;
+        // Fast enough for Windows 7, better than 192 for search speed
+        private const int S = 160;
         private const int Pixels = S * S;
 
         private const int MaskOffset = 0;
         private const int EdgeOffset = Pixels;
-        private const int ThinOffset = Pixels * 2;
-        private const int ProjOffset = Pixels * 3;
-        private const int BlockOffset = ProjOffset + 384;
-        private const int FeatureOffset = BlockOffset + 576;
+        private const int ProjOffset = Pixels * 2;
+        private const int BlockOffset = ProjOffset + 320;
+        private const int FeatureOffset = BlockOffset + 400;
         private const int TotalBytes = FeatureOffset + 32;
 
         public static double Compare(string queryImagePath, string dbImagePath)
@@ -38,13 +39,13 @@ namespace CDRPhotoMatchPro.Imaging
             try
             {
                 using (Bitmap src = new Bitmap(imagePath))
-                using (Bitmap crop = CropMainDesign(src))
+                using (Bitmap crop = CropMainJewellery(src))
                 using (Bitmap norm = ResizeToSquare(crop, S))
                 using (Bitmap gray = ToGray(norm))
                 {
                     byte[] data = new byte[TotalBytes];
 
-                    BuildMaskEdgeThin(norm, gray, data);
+                    BuildMaskAndEdge(norm, gray, data);
                     BuildProjection(data);
                     BuildBlocks(data);
                     BuildFeatures(data);
@@ -65,38 +66,34 @@ namespace CDRPhotoMatchPro.Imaging
 
             double best = 0;
 
+            // 0 and 180 degree usually enough for jewellery search; 90 degree kept but lower risk
             for (int rot = 0; rot < 4; rot++)
             {
                 for (int mirror = 0; mirror < 2; mirror++)
                 {
                     double mask = BestOverlap(a, b, MaskOffset, rot, mirror);
                     double edge = BestOverlap(a, b, EdgeOffset, rot, mirror);
-                    double thin = BestOverlap(a, b, ThinOffset, rot, mirror);
                     double proj = ProjectionScore(a, b, rot, mirror);
                     double block = BlockScore(a, b, rot, mirror);
                     double feat = FeatureScore(a, b);
 
-                    double aspectPenalty = AspectPenalty(a, b);
-                    double densityPenalty = DensityPenalty(a, b);
-
                     double score =
-                        edge * 0.28 +
-                        thin * 0.24 +
-                        mask * 0.18 +
-                        proj * 0.12 +
-                        block * 0.10 +
+                        mask * 0.36 +
+                        edge * 0.30 +
+                        proj * 0.14 +
+                        block * 0.12 +
                         feat * 0.08;
 
-                    score *= aspectPenalty;
-                    score *= densityPenalty;
+                    score *= AspectPenalty(a, b);
+                    score *= FillPenalty(a, b);
 
                     if (score > best)
                         best = score;
                 }
             }
 
-            if (best < 28) best *= 0.45;
-            if (best < 45) best *= 0.75;
+            if (best < 18) best *= 0.55;
+            if (best < 35) best *= 0.80;
 
             return Math.Round(Clamp(best), 2);
         }
@@ -120,25 +117,88 @@ namespace CDRPhotoMatchPro.Imaging
             return new Size(S, S);
         }
 
-        private static Bitmap CropMainDesign(Bitmap src)
+        // ---------------- Crop / Normalize ----------------
+
+        private static Bitmap CropMainJewellery(Bitmap src)
         {
             using (Bitmap small = ResizeMax(src, 900))
             using (Bitmap gray = ToGray(small))
             {
-                Rectangle box = FindDesignBox(small, gray);
+                bool vectorLike = LooksLikeCorelVector(small);
+                Rectangle box = vectorLike ? FindVectorBox(small, gray) : FindPhotoJewelleryBox(small, gray);
 
                 if (box.Width < 20 || box.Height < 20)
                     return new Bitmap(small);
 
-                return small.Clone(box, PixelFormat.Format24bppRgb);
+                int pad = Math.Max(10, Math.Max(box.Width, box.Height) / 10);
+                int x1 = Math.Max(0, box.Left - pad);
+                int y1 = Math.Max(0, box.Top - pad);
+                int x2 = Math.Min(small.Width, box.Right + pad);
+                int y2 = Math.Min(small.Height, box.Bottom + pad);
+
+                Rectangle safe = Rectangle.FromLTRB(x1, y1, x2, y2);
+                if (safe.Width < 5 || safe.Height < 5)
+                    return new Bitmap(small);
+
+                return small.Clone(safe, PixelFormat.Format24bppRgb);
             }
         }
 
-        private static Rectangle FindDesignBox(Bitmap color, Bitmap gray)
+        private static bool LooksLikeCorelVector(Bitmap bmp)
         {
-            int w = color.Width;
-            int h = color.Height;
+            int dark = 0, white = 0, total = 0;
+            int stepX = Math.Max(1, bmp.Width / 120);
+            int stepY = Math.Max(1, bmp.Height / 120);
 
+            for (int y = 0; y < bmp.Height; y += stepY)
+            {
+                for (int x = 0; x < bmp.Width; x += stepX)
+                {
+                    Color c = bmp.GetPixel(x, y);
+                    int bright = (c.R + c.G + c.B) / 3;
+                    int max = Math.Max(c.R, Math.Max(c.G, c.B));
+                    int min = Math.Min(c.R, Math.Min(c.G, c.B));
+                    int sat = max - min;
+
+                    if (bright < 80) dark++;
+                    if (bright > 235 && sat < 25) white++;
+                    total++;
+                }
+            }
+
+            if (total == 0) return false;
+            double darkRatio = dark / (double)total;
+            double whiteRatio = white / (double)total;
+
+            return darkRatio > 0.02 && whiteRatio > 0.45;
+        }
+
+        private static Rectangle FindVectorBox(Bitmap color, Bitmap gray)
+        {
+            int w = color.Width, h = color.Height;
+            bool[,] mask = new bool[w, h];
+
+            for (int y = 1; y < h - 1; y++)
+            {
+                for (int x = 1; x < w - 1; x++)
+                {
+                    Color c = color.GetPixel(x, y);
+                    int bright = (c.R + c.G + c.B) / 3;
+                    int max = Math.Max(c.R, Math.Max(c.G, c.B));
+                    int min = Math.Min(c.R, Math.Min(c.G, c.B));
+                    int sat = max - min;
+
+                    mask[x, y] = bright < 210 && !(bright > 180 && sat < 12);
+                }
+            }
+
+            CleanBoolMask(mask, w, h);
+            return LargestUsefulComponent(mask, w, h, true);
+        }
+
+        private static Rectangle FindPhotoJewelleryBox(Bitmap color, Bitmap gray)
+        {
+            int w = color.Width, h = color.Height;
             bool[,] mask = new bool[w, h];
 
             for (int y = 1; y < h - 1; y++)
@@ -152,81 +212,64 @@ namespace CDRPhotoMatchPro.Imaging
                     int sat = max - min;
                     int bright = (c.R + c.G + c.B) / 3;
 
-                    int gx =
-                        -G(gray, x - 1, y - 1) + G(gray, x + 1, y - 1) +
-                        -2 * G(gray, x - 1, y) + 2 * G(gray, x + 1, y) +
-                        -G(gray, x - 1, y + 1) + G(gray, x + 1, y + 1);
+                    int mag = Sobel(gray, x, y);
 
-                    int gy =
-                        -G(gray, x - 1, y - 1) - 2 * G(gray, x, y - 1) - G(gray, x + 1, y - 1) +
-                         G(gray, x - 1, y + 1) + 2 * G(gray, x, y + 1) + G(gray, x + 1, y + 1);
+                    bool gold =
+                        c.R > 105 && c.G > 70 && c.B < 130 &&
+                        c.R >= c.G && sat > 28 && bright > 45 && bright < 245;
 
-                    int mag = (int)Math.Sqrt(gx * gx + gy * gy);
+                    bool redGreenStone =
+                        sat > 45 && bright > 35 && bright < 245 &&
+                        ((c.R > c.G + 25 && c.R > c.B + 25) ||
+                         (c.G > c.R + 15 && c.G > c.B + 15) ||
+                         (c.B > c.R + 15 && c.B > c.G + 15));
 
-                    bool gold = sat > 28 && bright > 35 && bright < 245;
-                    bool stone = sat > 18 && bright > 70 && bright < 255;
-                    bool darkEdge = bright < 185 && mag > 25;
-                    bool strongEdge = mag > 58 && bright < 245;
+                    bool whiteStone = bright > 135 && sat < 65 && mag > 18;
 
-                    bool likelyRuler = IsRulerLike(c, bright, sat, mag);
+                    bool darkCut = bright < 120 && mag > 18;
+
                     bool likelySkin = IsSkinLike(c);
+                    bool likelyRuler = IsRulerLike(c, bright, sat, mag);
+                    bool likelyText = sat < 35 && bright > 160 && mag > 35;
 
-                    mask[x, y] = (gold || stone || darkEdge || strongEdge) && !likelyRuler && !likelySkin;
+                    bool jewellery = (gold || redGreenStone || whiteStone || darkCut) &&
+                                     !likelySkin && !likelyRuler && !likelyText;
+
+                    mask[x, y] = jewellery;
                 }
             }
 
-            CleanMask(mask, w, h);
-            Rectangle best = LargestDesignComponent(mask, w, h);
+            CleanBoolMask(mask, w, h);
+            Rectangle best = LargestUsefulComponent(mask, w, h, false);
 
             if (best.Width <= 0 || best.Height <= 0)
-                return new Rectangle(0, 0, w, h);
-
-            int pad = Math.Max(10, Math.Max(best.Width, best.Height) / 7);
-
-            int x1 = Math.Max(0, best.Left - pad);
-            int y1 = Math.Max(0, best.Top - pad);
-            int x2 = Math.Min(w - 1, best.Right + pad);
-            int y2 = Math.Min(h - 1, best.Bottom + pad);
-
-            return Rectangle.FromLTRB(x1, y1, x2, y2);
-        }
-
-        private static bool IsSkinLike(Color c)
-        {
-            return c.R > 95 && c.G > 45 && c.B > 25 &&
-                   c.R > c.G && c.G > c.B &&
-                   (c.R - c.B) > 35;
-        }
-
-        private static bool IsRulerLike(Color c, int bright, int sat, int mag)
-        {
-            return bright > 90 && bright < 230 && sat < 35 && mag > 20;
-        }
-
-        private static void CleanMask(bool[,] mask, int w, int h)
-        {
-            bool[,] copy = new bool[w, h];
-
-            for (int y = 1; y < h - 1; y++)
             {
-                for (int x = 1; x < w - 1; x++)
+                // fallback: strong edges excluding skin/ruler
+                for (int y = 1; y < h - 1; y++)
                 {
-                    int cnt = 0;
+                    for (int x = 1; x < w - 1; x++)
+                    {
+                        Color c = color.GetPixel(x, y);
+                        int max = Math.Max(c.R, Math.Max(c.G, c.B));
+                        int min = Math.Min(c.R, Math.Min(c.G, c.B));
+                        int sat = max - min;
+                        int bright = (c.R + c.G + c.B) / 3;
+                        int mag = Sobel(gray, x, y);
 
-                    for (int yy = -1; yy <= 1; yy++)
-                        for (int xx = -1; xx <= 1; xx++)
-                            if (mask[x + xx, y + yy]) cnt++;
-
-                    copy[x, y] = cnt >= 2;
+                        mask[x, y] = mag > 55 && bright < 245 &&
+                                     !IsSkinLike(c) &&
+                                     !IsRulerLike(c, bright, sat, mag);
+                    }
                 }
+
+                CleanBoolMask(mask, w, h);
+                best = LargestUsefulComponent(mask, w, h, false);
             }
 
-            for (int y = 1; y < h - 1; y++)
-                for (int x = 1; x < w - 1; x++)
-                    mask[x, y] = copy[x, y];
+            return best;
         }
 
-        private static Rectangle LargestDesignComponent(bool[,] mask, int w, int h)
+        private static Rectangle LargestUsefulComponent(bool[,] mask, int w, int h, bool vectorMode)
         {
             bool[,] seen = new bool[w, h];
             Rectangle best = new Rectangle(0, 0, 0, 0);
@@ -245,8 +288,8 @@ namespace CDRPhotoMatchPro.Imaging
                     int head = 0, tail = 0;
                     qx[tail] = xx;
                     qy[tail] = yy;
-                    tail++;
                     seen[xx, yy] = true;
+                    tail++;
 
                     int minX = xx, maxX = xx, minY = yy, maxY = yy, count = 0;
 
@@ -271,38 +314,39 @@ namespace CDRPhotoMatchPro.Imaging
                     int bw = maxX - minX + 1;
                     int bh = maxY - minY + 1;
 
-                    if (bw < 12 || bh < 12 || count < 45)
+                    if (bw < 10 || bh < 10 || count < 35)
                         continue;
 
                     double ratio = bw / (double)Math.Max(1, bh);
-
-                    if (ratio > 4.8 || ratio < 0.20)
+                    if (ratio > 7.5 || ratio < 0.12)
                         continue;
 
                     double area = bw * bh;
                     double density = count / Math.Max(1.0, area);
 
-                    if (density < 0.015)
+                    if (!vectorMode && density < 0.01)
                         continue;
 
-                    double centerX = (minX + maxX) / 2.0;
-                    double centerY = (minY + maxY) / 2.0;
+                    double cx = (minX + maxX) / 2.0;
+                    double cy = (minY + maxY) / 2.0;
+                    double centerPenalty = 1.0 - Math.Min(0.65, Math.Abs(cx - w / 2.0) / w + Math.Abs(cy - h / 2.0) / h);
 
-                    double dx = Math.Abs(centerX - w / 2.0) / w;
-                    double dy = Math.Abs(centerY - h / 2.0) / h;
+                    // Prefer jewellery-sized object, not full phone screenshot/page
+                    double sizeRatio = area / (double)(w * h);
+                    double sizeBonus = 1.0;
+                    if (!vectorMode)
+                    {
+                        if (sizeRatio > 0.75) sizeBonus = 0.45;
+                        else if (sizeRatio > 0.45) sizeBonus = 0.65;
+                        else if (sizeRatio > 0.03 && sizeRatio < 0.35) sizeBonus = 1.20;
+                    }
 
-                    double centerBonus = 1.0 - Math.Min(0.65, dx + dy);
-                    double shapeBonus = 1.0;
-
-                    if (ratio > 0.45 && ratio < 2.2)
-                        shapeBonus = 1.25;
-
-                    double score = count * centerBonus * shapeBonus * (0.60 + density);
+                    double score = count * centerPenalty * sizeBonus * (0.55 + density);
 
                     if (score > bestScore)
                     {
                         bestScore = score;
-                        best = Rectangle.FromLTRB(minX, minY, maxX, maxY);
+                        best = Rectangle.FromLTRB(minX, minY, maxX + 1, maxY + 1);
                     }
                 }
             }
@@ -324,8 +368,34 @@ namespace CDRPhotoMatchPro.Imaging
             tail++;
         }
 
-        private static void BuildMaskEdgeThin(Bitmap color, Bitmap gray, byte[] data)
+        private static void CleanBoolMask(bool[,] mask, int w, int h)
         {
+            bool[,] copy = new bool[w, h];
+
+            for (int y = 1; y < h - 1; y++)
+            {
+                for (int x = 1; x < w - 1; x++)
+                {
+                    int cnt = 0;
+                    for (int yy = -1; yy <= 1; yy++)
+                        for (int xx = -1; xx <= 1; xx++)
+                            if (mask[x + xx, y + yy]) cnt++;
+
+                    copy[x, y] = cnt >= 2;
+                }
+            }
+
+            for (int y = 1; y < h - 1; y++)
+                for (int x = 1; x < w - 1; x++)
+                    mask[x, y] = copy[x, y];
+        }
+
+        // ---------------- Descriptor ----------------
+
+        private static void BuildMaskAndEdge(Bitmap color, Bitmap gray, byte[] data)
+        {
+            bool vectorLike = LooksLikeCorelVector(color);
+
             for (int y = 1; y < S - 1; y++)
             {
                 for (int x = 1; x < S - 1; x++)
@@ -336,65 +406,34 @@ namespace CDRPhotoMatchPro.Imaging
                     int min = Math.Min(c.R, Math.Min(c.G, c.B));
                     int sat = max - min;
                     int bright = (c.R + c.G + c.B) / 3;
+                    int mag = Sobel(gray, x, y);
 
-                    int gx =
-                        -G(gray, x - 1, y - 1) + G(gray, x + 1, y - 1) +
-                        -2 * G(gray, x - 1, y) + 2 * G(gray, x + 1, y) +
-                        -G(gray, x - 1, y + 1) + G(gray, x + 1, y + 1);
+                    bool design;
 
-                    int gy =
-                        -G(gray, x - 1, y - 1) - 2 * G(gray, x, y - 1) - G(gray, x + 1, y - 1) +
-                         G(gray, x - 1, y + 1) + 2 * G(gray, x, y + 1) + G(gray, x + 1, y + 1);
+                    if (vectorLike)
+                    {
+                        design = bright < 215;
+                    }
+                    else
+                    {
+                        bool gold = c.R > 100 && c.G > 65 && c.B < 140 && c.R >= c.G && sat > 24;
+                        bool stones = sat > 42 && bright > 30 && bright < 250;
+                        bool whiteStone = bright > 135 && sat < 75 && mag > 18;
+                        bool darkLine = bright < 125 && mag > 18;
 
-                    int mag = (int)Math.Sqrt(gx * gx + gy * gy);
-
-                    bool design =
-                        (sat > 22 && bright > 28 && bright < 250) ||
-                        (bright < 190 && mag > 25) ||
-                        (mag > 55 && bright < 245);
-
-                    bool edge = mag > 32;
+                        design = (gold || stones || whiteStone || darkLine) &&
+                                 !IsSkinLike(c) &&
+                                 !IsRulerLike(c, bright, sat, mag);
+                    }
 
                     int idx = y * S + x;
-
                     data[MaskOffset + idx] = design ? (byte)255 : (byte)0;
-                    data[EdgeOffset + idx] = edge ? (byte)255 : (byte)0;
+                    data[EdgeOffset + idx] = mag > 30 ? (byte)255 : (byte)0;
                 }
             }
 
             CleanNoise(data, MaskOffset);
             CleanNoise(data, EdgeOffset);
-            BuildThin(data);
-        }
-
-        private static void BuildThin(byte[] data)
-        {
-            for (int y = 1; y < S - 1; y++)
-            {
-                for (int x = 1; x < S - 1; x++)
-                {
-                    int idx = y * S + x;
-
-                    if (data[MaskOffset + idx] == 0)
-                        continue;
-
-                    bool boundary = false;
-
-                    for (int yy = -1; yy <= 1; yy++)
-                    {
-                        for (int xx = -1; xx <= 1; xx++)
-                        {
-                            if (data[MaskOffset + (y + yy) * S + (x + xx)] == 0)
-                                boundary = true;
-                        }
-                    }
-
-                    if (boundary)
-                        data[ThinOffset + idx] = 255;
-                }
-            }
-
-            CleanNoise(data, ThinOffset);
         }
 
         private static void CleanNoise(byte[] data, int offset)
@@ -407,7 +446,6 @@ namespace CDRPhotoMatchPro.Imaging
                 for (int x = 1; x < S - 1; x++)
                 {
                     int count = 0;
-
                     for (int yy = -1; yy <= 1; yy++)
                         for (int xx = -1; xx <= 1; xx++)
                             if (copy[(y + yy) * S + (x + xx)] > 0) count++;
@@ -431,18 +469,18 @@ namespace CDRPhotoMatchPro.Imaging
             {
                 int count = 0;
                 for (int x = 0; x < S; x++)
-                    if (data[ThinOffset + y * S + x] > 0) count++;
+                    if (data[MaskOffset + y * S + x] > 0) count++;
 
-                data[p++] = (byte)Math.Min(255, count);
+                data[p++] = (byte)Math.Min(255, count * 2);
             }
 
             for (int x = 0; x < S; x++)
             {
                 int count = 0;
                 for (int y = 0; y < S; y++)
-                    if (data[ThinOffset + y * S + x] > 0) count++;
+                    if (data[MaskOffset + y * S + x] > 0) count++;
 
-                data[p++] = (byte)Math.Min(255, count);
+                data[p++] = (byte)Math.Min(255, count * 2);
             }
         }
 
@@ -451,15 +489,15 @@ namespace CDRPhotoMatchPro.Imaging
             int p = BlockOffset;
             int block = 8;
 
-            for (int by = 0; by < 24; by++)
+            for (int by = 0; by < 20; by++)
             {
-                for (int bx = 0; bx < 24; bx++)
+                for (int bx = 0; bx < 20; bx++)
                 {
                     int count = 0;
 
                     for (int y = by * block; y < by * block + block; y++)
                         for (int x = bx * block; x < bx * block + block; x++)
-                            if (data[ThinOffset + y * S + x] > 0) count++;
+                            if (data[MaskOffset + y * S + x] > 0) count++;
 
                     data[p++] = (byte)Math.Min(255, count * 4);
                 }
@@ -468,10 +506,7 @@ namespace CDRPhotoMatchPro.Imaging
 
         private static void BuildFeatures(byte[] data)
         {
-            int maskCount = 0;
-            int edgeCount = 0;
-            int thinCount = 0;
-
+            int maskCount = 0, edgeCount = 0;
             int minX = S, minY = S, maxX = 0, maxY = 0;
             double sx = 0, sy = 0;
 
@@ -495,9 +530,6 @@ namespace CDRPhotoMatchPro.Imaging
 
                     if (data[EdgeOffset + idx] > 0)
                         edgeCount++;
-
-                    if (data[ThinOffset + idx] > 0)
-                        thinCount++;
                 }
             }
 
@@ -508,7 +540,6 @@ namespace CDRPhotoMatchPro.Imaging
 
             data[p++] = (byte)Math.Min(255, maskCount * 255 / Pixels);
             data[p++] = (byte)Math.Min(255, edgeCount * 255 / Pixels);
-            data[p++] = (byte)Math.Min(255, thinCount * 255 / Pixels);
             data[p++] = (byte)Math.Min(255, bw * 255 / S);
             data[p++] = (byte)Math.Min(255, bh * 255 / S);
             data[p++] = (byte)(maskCount == 0 ? 128 : Math.Min(255, (int)(sx / maskCount * 255 / S)));
@@ -523,10 +554,12 @@ namespace CDRPhotoMatchPro.Imaging
                 data[p++] = 0;
         }
 
+        // ---------------- Compare helpers ----------------
+
         private static double BestOverlap(byte[] a, byte[] b, int offset, int rot, int mirror)
         {
             double best = 0;
-            int[] shifts = { -10, -6, -3, 0, 3, 6, 10 };
+            int[] shifts = { -8, -4, 0, 4, 8 };
 
             for (int sy = 0; sy < shifts.Length; sy++)
             {
@@ -542,10 +575,7 @@ namespace CDRPhotoMatchPro.Imaging
 
         private static double OverlapScore(byte[] a, byte[] b, int offset, int rot, int mirror, int dx, int dy)
         {
-            int inter = 0;
-            int union = 0;
-            int ac = 0;
-            int bc = 0;
+            int inter = 0, union = 0, ac = 0, bc = 0;
 
             for (int y = 0; y < S; y++)
             {
@@ -576,102 +606,96 @@ namespace CDRPhotoMatchPro.Imaging
             double iou = inter * 100.0 / union;
             double coverA = inter * 100.0 / ac;
             double coverB = inter * 100.0 / bc;
-
             double balance = Math.Min(ac, bc) * 100.0 / Math.Max(ac, bc);
 
-            return Clamp(iou * 1.25 + Math.Min(coverA, coverB) * 0.42 + balance * 0.18);
+            return Clamp(iou * 1.40 + Math.Min(coverA, coverB) * 0.35 + balance * 0.15);
         }
 
         private static double ProjectionScore(byte[] a, byte[] b, int rot, int mirror)
         {
             double diff = 0;
 
-            for (int i = 0; i < 384; i++)
+            for (int i = 0; i < 320; i++)
             {
                 int bi = i;
 
                 if (rot == 1 || rot == 3)
-                    bi = i < 192 ? 192 + i : i - 192;
+                    bi = i < 160 ? 160 + i : i - 160;
 
-                if (mirror == 1 && bi >= 192)
-                    bi = 192 + (191 - (bi - 192));
+                if (mirror == 1 && bi >= 160)
+                    bi = 160 + (159 - (bi - 160));
 
                 diff += Math.Abs(a[ProjOffset + i] - b[ProjOffset + bi]);
             }
 
-            return Clamp(100.0 - (diff / 384.0) * 100.0 / 255.0);
+            return Clamp(100.0 - (diff / 320.0) * 100.0 / 255.0);
         }
 
         private static double BlockScore(byte[] a, byte[] b, int rot, int mirror)
         {
             double diff = 0;
 
-            for (int by = 0; by < 24; by++)
+            for (int by = 0; by < 20; by++)
             {
-                for (int bx = 0; bx < 24; bx++)
+                for (int bx = 0; bx < 20; bx++)
                 {
-                    int ai = by * 24 + bx;
-                    int tx = bx;
-                    int ty = by;
+                    int ai = by * 20 + bx;
+                    int tx = bx, ty = by;
 
                     if (mirror == 1)
-                        tx = 23 - tx;
+                        tx = 19 - tx;
 
-                    int rx = tx;
-                    int ry = ty;
+                    int rx = tx, ry = ty;
 
-                    if (rot == 1) { rx = 23 - ty; ry = tx; }
-                    else if (rot == 2) { rx = 23 - tx; ry = 23 - ty; }
-                    else if (rot == 3) { rx = ty; ry = 23 - tx; }
+                    if (rot == 1) { rx = 19 - ty; ry = tx; }
+                    else if (rot == 2) { rx = 19 - tx; ry = 19 - ty; }
+                    else if (rot == 3) { rx = ty; ry = 19 - tx; }
 
-                    int bi = ry * 24 + rx;
-
+                    int bi = ry * 20 + rx;
                     diff += Math.Abs(a[BlockOffset + ai] - b[BlockOffset + bi]);
                 }
             }
 
-            return Clamp(100.0 - (diff / 576.0) * 100.0 / 255.0);
+            return Clamp(100.0 - (diff / 400.0) * 100.0 / 255.0);
         }
 
         private static double FeatureScore(byte[] a, byte[] b)
         {
             double diff = 0;
-
-            for (int i = 0; i < 10; i++)
+            for (int i = 0; i < 9; i++)
                 diff += Math.Abs(a[FeatureOffset + i] - b[FeatureOffset + i]);
 
-            return Clamp(100.0 - (diff / 10.0) * 100.0 / 255.0);
+            return Clamp(100.0 - (diff / 9.0) * 100.0 / 255.0);
         }
 
         private static double AspectPenalty(byte[] a, byte[] b)
         {
-            int aw = a[FeatureOffset + 3];
-            int ah = a[FeatureOffset + 4];
-            int bw = b[FeatureOffset + 3];
-            int bh = b[FeatureOffset + 4];
+            int aw = a[FeatureOffset + 2];
+            int ah = a[FeatureOffset + 3];
+            int bw = b[FeatureOffset + 2];
+            int bh = b[FeatureOffset + 3];
 
             double arA = aw / (double)Math.Max(1, ah);
             double arB = bw / (double)Math.Max(1, bh);
-
             double r = Math.Min(arA, arB) / Math.Max(arA, arB);
 
-            if (r < 0.35) return 0.45;
-            if (r < 0.50) return 0.62;
-            if (r < 0.70) return 0.82;
+            if (r < 0.25) return 0.42;
+            if (r < 0.40) return 0.60;
+            if (r < 0.60) return 0.80;
 
             return 1.0;
         }
 
-        private static double DensityPenalty(byte[] a, byte[] b)
+        private static double FillPenalty(byte[] a, byte[] b)
         {
-            int da = a[FeatureOffset + 0];
-            int db = b[FeatureOffset + 0];
+            int fa = a[FeatureOffset + 0];
+            int fb = b[FeatureOffset + 0];
 
-            double r = Math.Min(da, db) / (double)Math.Max(1, Math.Max(da, db));
+            double r = Math.Min(fa, fb) / (double)Math.Max(1, Math.Max(fa, fb));
 
-            if (r < 0.35) return 0.50;
-            if (r < 0.55) return 0.72;
-            if (r < 0.75) return 0.88;
+            if (r < 0.25) return 0.50;
+            if (r < 0.45) return 0.70;
+            if (r < 0.65) return 0.86;
 
             return 1.0;
         }
@@ -681,8 +705,7 @@ namespace CDRPhotoMatchPro.Imaging
             if (mirror == 1)
                 x = S - 1 - x;
 
-            int rx = x;
-            int ry = y;
+            int rx = x, ry = y;
 
             if (rot == 1)
             {
@@ -701,6 +724,34 @@ namespace CDRPhotoMatchPro.Imaging
             }
 
             return ry * S + rx;
+        }
+
+        // ---------------- Utility ----------------
+
+        private static bool IsSkinLike(Color c)
+        {
+            return c.R > 95 && c.G > 45 && c.B > 25 &&
+                   c.R > c.G && c.G >= c.B &&
+                   (c.R - c.B) > 30;
+        }
+
+        private static bool IsRulerLike(Color c, int bright, int sat, int mag)
+        {
+            return bright > 80 && bright < 235 && sat < 45 && mag > 18;
+        }
+
+        private static int Sobel(Bitmap gray, int x, int y)
+        {
+            int gx =
+                -G(gray, x - 1, y - 1) + G(gray, x + 1, y - 1) +
+                -2 * G(gray, x - 1, y) + 2 * G(gray, x + 1, y) +
+                -G(gray, x - 1, y + 1) + G(gray, x + 1, y + 1);
+
+            int gy =
+                -G(gray, x - 1, y - 1) - 2 * G(gray, x, y - 1) - G(gray, x + 1, y - 1) +
+                 G(gray, x - 1, y + 1) + 2 * G(gray, x, y + 1) + G(gray, x + 1, y + 1);
+
+            return (int)Math.Sqrt(gx * gx + gy * gy);
         }
 
         private static Bitmap ResizeMax(Bitmap src, int max)
