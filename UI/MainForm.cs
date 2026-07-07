@@ -288,14 +288,13 @@ else if (mode == "FULL-PAGE-HD")
     }
 
     var top = results
-        .GroupBy(x => (x.CdrPath ?? "") + "|" + x.PageNumber + "|" + x.DesignNumber + "|" + (x.ExportMode ?? ""))
-        .Select(g => g.OrderByDescending(x => x.MatchPercent).First())
-        .OrderByDescending(x => x.ExportMode == "OBJECT-HD")
-        .ThenByDescending(x => x.MatchPercent)
-        .ThenByDescending(x => x.ExportMode == "GROUP-HD")
-        .Take(50)
-        .ToList();
-
+    .GroupBy(x => (x.CdrPath ?? "") + "|" + x.PageNumber + "|" + x.DesignNumber)
+    .Select(g => g.OrderByDescending(x => x.MatchPercent).First())
+    .OrderByDescending(x => x.MatchPercent)
+    .ThenByDescending(x => x.ExportMode == "OBJECT-HD")
+    .ThenBy(x => x.ShapeCount)
+    .Take(50)
+    .ToList();
     grid.DataSource = top;
 
     if (top.Count == 0)
