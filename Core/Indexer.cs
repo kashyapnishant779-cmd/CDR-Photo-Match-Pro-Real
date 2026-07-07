@@ -109,22 +109,6 @@ namespace CDRPhotoMatchPro.Core
                                         }
                                       var rawSize = matcher.ReadSize(imgPath);
 
-if (design.ExportMode == "OBJECT-HD")
-{
-    if (rawSize.Width < 80 || rawSize.Height < 80)
-    {
-        skippedCount++;
-        continue;
-    }
-
-    double ratio = rawSize.Width / (double)Math.Max(1, rawSize.Height);
-
-    if (ratio > 4.0 || ratio < 0.25)
-    {
-        skippedCount++;
-        continue;
-    }
-}
 
 
                                         byte[] desc = matcher.ExtractDescriptorBytes(imgPath);
