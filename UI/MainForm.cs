@@ -232,7 +232,7 @@ namespace CDRPhotoMatchPro.UI
 
     double threshold;
     if (!double.TryParse(thresholdBox.Text, out threshold))
-        threshold = 35;
+        threshold = 15;
 
     var matcher = new ImageMatcher();
     var query = matcher.ExtractDescriptorBytes(imagePath.Text);
@@ -259,27 +259,14 @@ namespace CDRPhotoMatchPro.UI
 
             string mode = d.ExportMode == null ? "" : d.ExportMode.ToUpperInvariant();
 
-            if (mode == "OBJECT-HD")
-                score += 22;
-            else if (mode == "GROUP-HD")
-                score += 4;
-            else if (mode == "FULL-PAGE-HD")
-                score -= 18;
-            else
-                score -= 5;
+             if (mode == "OBJECT-HD")
+    score += 15;
+else if (mode == "GROUP-HD")
+    score += 10;
+else if (mode == "FULL-PAGE-HD")
+    score += 8;
 
-            if (mode == "FULL-PAGE-HD" && raw < 70)
-                continue;
-
-            if (mode == "GROUP-HD" && raw < 55)
-                continue;
-
-            if (mode == "OBJECT-HD" && raw < 25)
-                continue;
-
-            if (score < threshold)
-                continue;
-
+            
             if (score > 100)
                 score = 100;
 
