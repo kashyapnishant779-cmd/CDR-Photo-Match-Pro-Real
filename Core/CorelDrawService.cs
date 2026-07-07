@@ -137,8 +137,7 @@ if (box.Width < 2 || box.Height < 2)
 
 float area = box.Width * box.Height;
 
-if (area < 25)
-    continue;
+
 
 float ratio = box.Width / Math.Max(1, box.Height);
 
