@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -227,7 +228,7 @@ namespace CDRPhotoMatchPro.UI
         return;
     }
 
-    status.Text = "Searching...";
+    status.Text = "Searching multi-part...";
     Application.DoEvents();
 
     double threshold;
@@ -235,71 +236,93 @@ namespace CDRPhotoMatchPro.UI
         threshold = 15;
 
     var matcher = new ImageMatcher();
-    var query = matcher.ExtractDescriptorBytes(imagePath.Text);
-
-    if (query == null || query.Length == 0)
-    {
-        MessageBox.Show("Image descriptor failed.");
-        return;
-    }
-
     var results = new List<MatchResult>();
 
     using (var db = new Database(DbPath))
     {
         var designs = db.LoadDesigns();
 
-        foreach (var d in designs)
+        string partDir = Path.Combine(AppRoot, "search_parts");
+        Directory.CreateDirectory(partDir);
+
+        using (var bmp = new Bitmap(imagePath.Text))
         {
-            if (d.Descriptor == null || d.Descriptor.Length == 0)
-                continue;
-
-            double raw = matcher.Compare(query, d.Descriptor);
-            double score = raw;
-
-            string mode = d.ExportMode == null ? "" : d.ExportMode.ToUpperInvariant();
-
-             if (mode == "OBJECT-HD")
-    score += 15;
-else if (mode == "GROUP-HD")
-    score += 10;
-else if (mode == "FULL-PAGE-HD")
-    score += 8;
-
-            
-            if (score > 100)
-                score = 100;
-
-            results.Add(new MatchResult
+            foreach (var part in ImageSegmenter.Split(bmp))
             {
-                MatchPercent = Math.Round(score, 2),
-                CdrFileName = d.FileName,
-                FullFolderPath = d.FolderPath,
-                CdrPath = d.CdrPath,
-                PageNumber = d.PageNumber,
-                DesignNumber = d.DesignNumber,
-                ObjectNumber = d.DesignNumber,
-                ThumbnailPath = d.ThumbnailPath,
-                PngPath = d.PngPath,
-                ExportMode = d.ExportMode,
-                ShapeCount = d.ShapeCount
-            });
+                try
+                {
+                    string partPath = Path.Combine(partDir, part.Name + ".png");
+                    part.Bitmap.Save(partPath, ImageFormat.Png);
+
+                    var query = matcher.ExtractDescriptorBytes(partPath);
+                    if (query == null || query.Length == 0)
+                        continue;
+
+                    foreach (var d in designs)
+                    {
+                        if (d.Descriptor == null || d.Descriptor.Length == 0)
+                            continue;
+
+                        double raw = matcher.Compare(query, d.Descriptor);
+                        double score = raw;
+
+                        string mode = d.ExportMode == null ? "" : d.ExportMode.ToUpperInvariant();
+
+                        if (mode == "OBJECT-HD")
+                            score += 15;
+                        else if (mode == "GROUP-HD")
+                            score += 10;
+                        else if (mode == "FULL-PAGE-HD")
+                            score += 4;
+
+                        if (part.Name != "FULL")
+                            score += 8;
+
+                        if (score > 100)
+                            score = 100;
+
+                        if (score < threshold)
+                            continue;
+
+                        results.Add(new MatchResult
+                        {
+                            MatchPercent = Math.Round(score, 2),
+                            CdrFileName = part.Name + " | " + d.FileName,
+                            FullFolderPath = d.FolderPath,
+                            CdrPath = d.CdrPath,
+                            PageNumber = d.PageNumber,
+                            DesignNumber = d.DesignNumber,
+                            ObjectNumber = d.DesignNumber,
+                            ThumbnailPath = d.ThumbnailPath,
+                            PngPath = d.PngPath,
+                            ExportMode = d.ExportMode,
+                            ShapeCount = d.ShapeCount
+                        });
+                    }
+                }
+                finally
+                {
+                    if (part.Bitmap != null)
+                        part.Bitmap.Dispose();
+                }
+            }
         }
     }
 
     var top = results
-    .GroupBy(x => (x.CdrPath ?? "") + "|" + x.PageNumber + "|" + x.DesignNumber)
-    .Select(g => g.OrderByDescending(x => x.MatchPercent).First())
-    .OrderByDescending(x => x.MatchPercent)
-    .ThenByDescending(x => x.ExportMode == "OBJECT-HD")
-    .ThenBy(x => x.ShapeCount)
-    .Take(50)
-    .ToList();
+        .GroupBy(x => (x.CdrPath ?? "") + "|" + x.PageNumber + "|" + x.DesignNumber)
+        .Select(g => g.OrderByDescending(x => x.MatchPercent).First())
+        .OrderByDescending(x => x.MatchPercent)
+        .ThenByDescending(x => x.ExportMode == "OBJECT-HD")
+        .ThenBy(x => x.ShapeCount)
+        .Take(50)
+        .ToList();
+
     grid.DataSource = top;
 
     if (top.Count == 0)
     {
-        status.Text = "NO RESULT - exact object not found. Try lower threshold or full rescan.";
+        status.Text = "NO RESULT - try lower threshold or full rescan.";
         preview.ImageLocation = imagePath.Text;
     }
     else
