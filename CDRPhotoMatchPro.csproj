@@ -51,6 +51,8 @@
     <Compile Include="Core\CorelDrawService.cs" />
     <Compile Include="Core\Indexer.cs" />
     <Compile Include="Imaging\ImageMatcher.cs" />
+    <Compile Include="Imaging\ImageFingerprint.cs" />
+    <Compile Include="Imaging\DesignMatcher.cs" />
     <Compile Include="Imaging\ImageSegmenter.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
