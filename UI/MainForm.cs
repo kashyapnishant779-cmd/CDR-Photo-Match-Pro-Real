@@ -268,9 +268,7 @@ namespace CDRPhotoMatchPro.UI
             if (score > 100)
                 score = 100;
 
-            if (score < threshold)
-                continue;
-
+           
             results.Add(new MatchResult
             {
                 MatchPercent = Math.Round(score, 2),
