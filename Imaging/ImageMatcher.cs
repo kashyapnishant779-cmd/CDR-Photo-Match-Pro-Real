@@ -11,112 +11,331 @@ namespace CDRPhotoMatchPro.Imaging
         private const int MaxParts = 6;
         private const int TotalBytes = MaxParts * PartSize;
 
-        public static double Compare(string queryImagePath, string dbImagePath)
+        private const int FullPart = 0;
+        private const int TopPart = 1;
+        private const int MiddlePart = 2;
+        private const int BottomPart = 3;
+        private const int LeftPart = 4;
+        private const int RightPart = 5;
+
+        public static double Compare(
+            string queryImagePath,
+            string databaseImagePath)
         {
-            ImageMatcher m = new ImageMatcher();
-            return m.Compare(
-                m.ExtractDescriptorBytes(queryImagePath),
-                m.ExtractDescriptorBytes(dbImagePath)
+            ImageMatcher matcher = new ImageMatcher();
+
+            byte[] query =
+                matcher.ExtractDescriptorBytes(
+                    queryImagePath
+                );
+
+            byte[] candidate =
+                matcher.ExtractDescriptorBytes(
+                    databaseImagePath
+                );
+
+            return matcher.Compare(
+                query,
+                candidate
             );
         }
 
-        public static double CompareImages(string queryImagePath, string dbImagePath)
+        public static double CompareImages(
+            string queryImagePath,
+            string databaseImagePath)
         {
-            return Compare(queryImagePath, dbImagePath);
+            return Compare(
+                queryImagePath,
+                databaseImagePath
+            );
         }
 
-        public byte[] ExtractDescriptorBytes(string imagePath)
+        public byte[] ExtractDescriptorBytes(
+            string imagePath)
         {
-            byte[] data = new byte[TotalBytes];
+            byte[] descriptor =
+                new byte[TotalBytes];
 
-            if (string.IsNullOrEmpty(imagePath) || !File.Exists(imagePath))
-                return data;
+            if (string.IsNullOrEmpty(imagePath) ||
+                !File.Exists(imagePath))
+            {
+                return descriptor;
+            }
 
             try
             {
-                using (Bitmap bmp = new Bitmap(imagePath))
+                using (Bitmap bitmap =
+                    new Bitmap(imagePath))
                 {
-                    List<ImageSegment> parts = ImageSegmenter.Segment(bmp);
+                    List<ImageSegment> segments =
+                        ImageSegmenter.Segment(bitmap);
 
-                    int count = Math.Min(MaxParts, parts.Count);
+                    int count =
+                        Math.Min(
+                            MaxParts,
+                            segments.Count
+                        );
 
                     for (int i = 0; i < count; i++)
                     {
-                        ImageFingerprint fp = ImageFingerprint.FromBitmap(parts[i].Bitmap);
+                        ImageSegment segment =
+                            segments[i];
 
-                        WritePart(data, i, fp.Hash, fp.DarkRatio, fp.EdgeRatio, parts[i].Weight);
+                        if (segment == null ||
+                            segment.Bitmap == null)
+                        {
+                            continue;
+                        }
+
+                        ImageFingerprint fingerprint =
+                            ImageFingerprint.FromBitmap(
+                                segment.Bitmap
+                            );
+
+                        WritePart(
+                            descriptor,
+                            i,
+                            fingerprint.Hash,
+                            fingerprint.DarkRatio,
+                            fingerprint.EdgeRatio,
+                            segment.Weight
+                        );
                     }
+
+                    DisposeSegments(segments);
                 }
             }
             catch
             {
+                return new byte[TotalBytes];
             }
 
-            return data;
+            return descriptor;
         }
 
-        public double Compare(byte[] a, byte[] b)
+        public double Compare(
+            byte[] query,
+            byte[] candidate)
         {
-            if (a == null || b == null || a.Length < TotalBytes || b.Length < TotalBytes)
-                return 0;
-
-            double fullScore = ComparePart(a, b, 0, 0);
-
-            double weighted = 0;
-            double weightSum = 0;
-            int goodParts = 0;
-
-            for (int i = 0; i < MaxParts; i++)
+            if (!IsValidDescriptor(query) ||
+                !IsValidDescriptor(candidate))
             {
-                double qWeight = ReadDouble(a, i, 24);
-                if (qWeight <= 0) continue;
-
-                double best = 0;
-
-                for (int j = 0; j < MaxParts; j++)
-                {
-                    double cWeight = ReadDouble(b, j, 24);
-                    if (cWeight <= 0) continue;
-
-                    double s = ComparePart(a, b, i, j);
-
-                    if (s > best)
-                        best = s;
-                }
-
-                weighted += best * qWeight;
-                weightSum += qWeight;
-
-                if (best >= 72)
-                    goodParts++;
+                return 0;
             }
 
-            double partScore = weightSum > 0 ? weighted / weightSum : 0;
+            double fullScore =
+                ComparePart(
+                    query,
+                    candidate,
+                    FullPart,
+                    FullPart
+                );
 
-            double final = fullScore * 0.60 + partScore * 0.40;
+            double topScore =
+                ComparePart(
+                    query,
+                    candidate,
+                    TopPart,
+                    TopPart
+                );
 
-            if (goodParts <= 1 && final > 68)
-                final = 58;
+            double middleScore =
+                ComparePart(
+                    query,
+                    candidate,
+                    MiddlePart,
+                    MiddlePart
+                );
 
-            if (fullScore < 45 && partScore > 78)
-                final = 55;
+            double bottomScore =
+                ComparePart(
+                    query,
+                    candidate,
+                    BottomPart,
+                    BottomPart
+                );
 
-            if (fullScore < 35)
-                final = Math.Min(final, 50);
+            double normalLeft =
+                ComparePart(
+                    query,
+                    candidate,
+                    LeftPart,
+                    LeftPart
+                );
 
-            if (final > 100) final = 100;
-            if (final < 0) final = 0;
+            double normalRight =
+                ComparePart(
+                    query,
+                    candidate,
+                    RightPart,
+                    RightPart
+                );
 
-            return Math.Round(final, 2);
+            // Photo mirror ho sakti hai.
+            double mirrorLeft =
+                ComparePart(
+                    query,
+                    candidate,
+                    LeftPart,
+                    RightPart
+                );
+
+            double mirrorRight =
+                ComparePart(
+                    query,
+                    candidate,
+                    RightPart,
+                    LeftPart
+                );
+
+            double normalSideScore =
+                (
+                    normalLeft +
+                    normalRight
+                ) / 2.0;
+
+            double mirrorSideScore =
+                (
+                    mirrorLeft +
+                    mirrorRight
+                ) / 2.0;
+
+            double sideScore =
+                Math.Max(
+                    normalSideScore,
+                    mirrorSideScore
+                );
+
+            double verticalScore =
+                topScore * 0.27 +
+                middleScore * 0.46 +
+                bottomScore * 0.27;
+
+            double finalScore =
+                fullScore * 0.48 +
+                verticalScore * 0.36 +
+                sideScore * 0.16;
+
+            int strongParts = 0;
+            int mediumParts = 0;
+
+            CountPart(
+                fullScore,
+                ref strongParts,
+                ref mediumParts
+            );
+
+            CountPart(
+                topScore,
+                ref strongParts,
+                ref mediumParts
+            );
+
+            CountPart(
+                middleScore,
+                ref strongParts,
+                ref mediumParts
+            );
+
+            CountPart(
+                bottomScore,
+                ref strongParts,
+                ref mediumParts
+            );
+
+            CountPart(
+                sideScore,
+                ref strongParts,
+                ref mediumParts
+            );
+
+            double minimumVertical =
+                Math.Min(
+                    topScore,
+                    Math.Min(
+                        middleScore,
+                        bottomScore
+                    )
+                );
+
+            double maximumVertical =
+                Math.Max(
+                    topScore,
+                    Math.Max(
+                        middleScore,
+                        bottomScore
+                    )
+                );
+
+            // Sirf ek part similar ho to high score mat do.
+            if (strongParts <= 1)
+                finalScore *= 0.72;
+
+            if (mediumParts <= 2)
+                finalScore *= 0.82;
+
+            // Full silhouette weak hai to result ko control karo.
+            if (fullScore < 42)
+                finalScore *= 0.72;
+            else if (fullScore < 52)
+                finalScore *= 0.84;
+
+            // Parts me bahut disagreement ho to random group ho sakta hai.
+            if (maximumVertical - minimumVertical > 38)
+                finalScore *= 0.82;
+
+            // Middle jewellery ka sabse important part hai.
+            if (middleScore < 38)
+                finalScore *= 0.76;
+            else if (middleScore < 50)
+                finalScore *= 0.88;
+
+            // Exact/same design boost.
+            if (fullScore >= 82 &&
+                middleScore >= 78 &&
+                verticalScore >= 74)
+            {
+                finalScore += 7;
+            }
+
+            if (fullScore >= 90 &&
+                middleScore >= 86 &&
+                strongParts >= 4)
+            {
+                finalScore += 5;
+            }
+
+            finalScore =
+                Clamp(
+                    finalScore,
+                    0,
+                    100
+                );
+
+            return Math.Round(
+                finalScore,
+                2
+            );
         }
 
         public Size ReadSize(string imagePath)
         {
             try
             {
-                if (!File.Exists(imagePath)) return new Size(0, 0);
-                using (Bitmap bmp = new Bitmap(imagePath))
-                    return new Size(bmp.Width, bmp.Height);
+                if (string.IsNullOrEmpty(imagePath) ||
+                    !File.Exists(imagePath))
+                {
+                    return new Size(0, 0);
+                }
+
+                using (Bitmap bitmap =
+                    new Bitmap(imagePath))
+                {
+                    return new Size(
+                        bitmap.Width,
+                        bitmap.Height
+                    );
+                }
             }
             catch
             {
@@ -124,69 +343,269 @@ namespace CDRPhotoMatchPro.Imaging
             }
         }
 
-        public Size ReadSize(byte[] descriptorBytes)
+        public Size ReadSize(
+            byte[] descriptorBytes)
         {
-            return new Size(160, 160);
+            return new Size(256, 256);
         }
 
-        private static double ComparePart(byte[] a, byte[] b, int ai, int bi)
+        private static double ComparePart(
+            byte[] query,
+            byte[] candidate,
+            int queryPart,
+            int candidatePart)
         {
-            ulong ha = ReadUlong(a, ai, 0);
-            ulong hb = ReadUlong(b, bi, 0);
+            double queryWeight =
+                ReadDouble(
+                    query,
+                    queryPart,
+                    24
+                );
 
-            double da = ReadDouble(a, ai, 8);
-            double db = ReadDouble(b, bi, 8);
+            double candidateWeight =
+                ReadDouble(
+                    candidate,
+                    candidatePart,
+                    24
+                );
 
-            double ea = ReadDouble(a, ai, 16);
-            double eb = ReadDouble(b, bi, 16);
-
-            int dist = Hamming(ha ^ hb);
-
-            double hashScore = 1.0 - dist / 64.0;
-            double darkPenalty = Math.Abs(da - db);
-            double edgePenalty = Math.Abs(ea - eb);
-
-            double score = hashScore
-                         - darkPenalty * 0.55
-                         - edgePenalty * 0.75;
-
-            if (score < 0) score = 0;
-            if (score > 1) score = 1;
-
-            return score * 100.0;
-        }
-
-        private static void WritePart(byte[] data, int part, ulong hash, double dark, double edge, double weight)
-        {
-            int o = part * PartSize;
-
-            Array.Copy(BitConverter.GetBytes(hash), 0, data, o + 0, 8);
-            Array.Copy(BitConverter.GetBytes(dark), 0, data, o + 8, 8);
-            Array.Copy(BitConverter.GetBytes(edge), 0, data, o + 16, 8);
-            Array.Copy(BitConverter.GetBytes(weight), 0, data, o + 24, 8);
-        }
-
-        private static ulong ReadUlong(byte[] data, int part, int offset)
-        {
-            return BitConverter.ToUInt64(data, part * PartSize + offset);
-        }
-
-        private static double ReadDouble(byte[] data, int part, int offset)
-        {
-            return BitConverter.ToDouble(data, part * PartSize + offset);
-        }
-
-        private static int Hamming(ulong x)
-        {
-            int c = 0;
-
-            while (x != 0)
+            if (queryWeight <= 0 ||
+                candidateWeight <= 0)
             {
-                x &= x - 1;
-                c++;
+                return 0;
             }
 
-            return c;
+            ImageFingerprint first =
+                new ImageFingerprint
+                {
+                    Hash =
+                        ReadUlong(
+                            query,
+                            queryPart,
+                            0
+                        ),
+
+                    DarkRatio =
+                        ReadDouble(
+                            query,
+                            queryPart,
+                            8
+                        ),
+
+                    EdgeRatio =
+                        ReadDouble(
+                            query,
+                            queryPart,
+                            16
+                        )
+                };
+
+            ImageFingerprint second =
+                new ImageFingerprint
+                {
+                    Hash =
+                        ReadUlong(
+                            candidate,
+                            candidatePart,
+                            0
+                        ),
+
+                    DarkRatio =
+                        ReadDouble(
+                            candidate,
+                            candidatePart,
+                            8
+                        ),
+
+                    EdgeRatio =
+                        ReadDouble(
+                            candidate,
+                            candidatePart,
+                            16
+                        )
+                };
+
+            double score =
+                ImageFingerprint.Compare(
+                    first,
+                    second
+                );
+
+            // Bahut alag fill/density wale designs par extra penalty.
+            double darkDifference =
+                Math.Abs(
+                    first.DarkRatio -
+                    second.DarkRatio
+                );
+
+            double edgeDifference =
+                Math.Abs(
+                    first.EdgeRatio -
+                    second.EdgeRatio
+                );
+
+            if (darkDifference > 0.32)
+                score *= 0.70;
+            else if (darkDifference > 0.22)
+                score *= 0.84;
+
+            if (edgeDifference > 0.25)
+                score *= 0.76;
+            else if (edgeDifference > 0.17)
+                score *= 0.88;
+
+            return Clamp(
+                score,
+                0,
+                100
+            );
+        }
+
+        private static void CountPart(
+            double score,
+            ref int strongParts,
+            ref int mediumParts)
+        {
+            if (score >= 72)
+                strongParts++;
+
+            if (score >= 55)
+                mediumParts++;
+        }
+
+        private static bool IsValidDescriptor(
+            byte[] descriptor)
+        {
+            if (descriptor == null ||
+                descriptor.Length < TotalBytes)
+            {
+                return false;
+            }
+
+            double fullWeight =
+                ReadDouble(
+                    descriptor,
+                    FullPart,
+                    24
+                );
+
+            return fullWeight > 0;
+        }
+
+        private static void WritePart(
+            byte[] descriptor,
+            int part,
+            ulong hash,
+            double darkRatio,
+            double edgeRatio,
+            double weight)
+        {
+            int offset =
+                part * PartSize;
+
+            Array.Copy(
+                BitConverter.GetBytes(hash),
+                0,
+                descriptor,
+                offset,
+                8
+            );
+
+            Array.Copy(
+                BitConverter.GetBytes(darkRatio),
+                0,
+                descriptor,
+                offset + 8,
+                8
+            );
+
+            Array.Copy(
+                BitConverter.GetBytes(edgeRatio),
+                0,
+                descriptor,
+                offset + 16,
+                8
+            );
+
+            Array.Copy(
+                BitConverter.GetBytes(weight),
+                0,
+                descriptor,
+                offset + 24,
+                8
+            );
+        }
+
+        private static ulong ReadUlong(
+            byte[] descriptor,
+            int part,
+            int relativeOffset)
+        {
+            int offset =
+                part * PartSize +
+                relativeOffset;
+
+            return BitConverter.ToUInt64(
+                descriptor,
+                offset
+            );
+        }
+
+        private static double ReadDouble(
+            byte[] descriptor,
+            int part,
+            int relativeOffset)
+        {
+            int offset =
+                part * PartSize +
+                relativeOffset;
+
+            return BitConverter.ToDouble(
+                descriptor,
+                offset
+            );
+        }
+
+        private static void DisposeSegments(
+            List<ImageSegment> segments)
+        {
+            if (segments == null)
+                return;
+
+            for (int i = 0; i < segments.Count; i++)
+            {
+                try
+                {
+                    if (segments[i] != null &&
+                        segments[i].Bitmap != null)
+                    {
+                        segments[i].Bitmap.Dispose();
+                    }
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        private static double Clamp(
+            double value,
+            double minimum,
+            double maximum)
+        {
+            if (double.IsNaN(value) ||
+                double.IsInfinity(value))
+            {
+                return minimum;
+            }
+
+            if (value < minimum)
+                return minimum;
+
+            if (value > maximum)
+                return maximum;
+
+            return value;
         }
     }
 }
