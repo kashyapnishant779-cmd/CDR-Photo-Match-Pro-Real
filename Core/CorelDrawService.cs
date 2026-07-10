@@ -31,15 +31,18 @@ namespace CDRPhotoMatchPro.Core
             _app.Visible = true;
         }
 
-        public IEnumerable<DesignRecord> ExportDesigns(string cdrPath, string cacheRoot)
+        public IEnumerable<DesignRecord> ExportDesigns(
+            string cdrPath,
+            string cacheRoot)
         {
             var results = new List<DesignRecord>();
-            Directory.CreateDirectory(cacheRoot);
 
+            Directory.CreateDirectory(cacheRoot);
             CleanOldImages(cacheRoot);
 
             _logFile = Path.Combine(cacheRoot, "export_debug.txt");
-            Log("START COMPLETE HD ENGINE: " + cdrPath);
+
+            Log("START OBJECT ONLY ENGINE: " + cdrPath);
 
             dynamic doc = null;
 
@@ -49,123 +52,139 @@ namespace CDRPhotoMatchPro.Core
 
                 int pageCount = Convert.ToInt32(doc.Pages.Count);
 
-                for (int p = 1; p <= pageCount; p++)
+                for (int pageNo = 1; pageNo <= pageCount; pageNo++)
                 {
-                    dynamic page = doc.Pages[p];
+                    dynamic page = doc.Pages[pageNo];
                     page.Activate();
 
                     int shapeCount = Convert.ToInt32(page.Shapes.Count);
-                    Log("Page " + p + " shapes: " + shapeCount);
+
+                    Log(
+                        "Page " + pageNo +
+                        " top-level shapes: " + shapeCount
+                    );
 
                     int designNo = 1;
 
-                    // 1) Full page export - koi design miss na ho
-                    try
-                    {
-                        if (SelectAllPageShapes(page, shapeCount))
-                        {
-                            string baseName = SafeName(Path.GetFileNameWithoutExtension(cdrPath)) + "_p" + p + "_full";
-                            string png = Path.Combine(cacheRoot, baseName + "_HD.png");
-                            string thumb = Path.Combine(cacheRoot, baseName + "_thumb.jpg");
-
-                            CopyActiveSelection();
-                            Thread.Sleep(250);
-
-                            if (SaveClipboardArtwork(png, thumb))
-                            {
-                                results.Add(CreateRecord(cdrPath, thumb, png, p, designNo++, "FULL-PAGE-HD", shapeCount));
-                                Log("FULL PAGE OK: " + png);
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Log("Full page export failed: " + ex.Message);
-                    }
-
-                    // 2) Nearby group export
-                    List<List<int>> groups = BuildGroups(page, shapeCount);
-
-                    foreach (var group in groups)
+                    for (int shapeNo = 1;
+                         shapeNo <= shapeCount;
+                         shapeNo++)
                     {
                         try
                         {
-                            if (group.Count <= 0)
-                                continue;
+                            dynamic shape = page.Shapes[shapeNo];
 
-                            if (!SelectGroup(page, group))
-                                continue;
-
-                            string baseName = SafeName(Path.GetFileNameWithoutExtension(cdrPath)) + "_p" + p + "_d" + designNo;
-                            string png = Path.Combine(cacheRoot, baseName + "_HD.png");
-                            string thumb = Path.Combine(cacheRoot, baseName + "_thumb.jpg");
-
-                            CopyActiveSelection();
-                            Thread.Sleep(250);
-
-                            if (SaveClipboardArtwork(png, thumb))
+                            if (!IsUsableShape(shape))
                             {
-                                results.Add(CreateRecord(cdrPath, thumb, png, p, designNo, "GROUP-HD", group.Count));
-                                Log("GROUP OK: " + png);
-                                designNo++;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Log("Group export failed: " + ex.Message);
-                        }
-                    }
+                                Log(
+                                    "SKIP shape=" + shapeNo +
+                                    " unusable"
+                                );
 
-                    // 3) Single object HD fallback - koi object miss na ho
-                    for (int s = 1; s <= shapeCount; s++)
-                    {
-                        try
-                        {
-                            dynamic shape = page.Shapes[s];
-                            try
-{
-    if (shape.Type == 6)
-        continue;
-}
-catch
-{
-}
+                                continue;
+                            }
+
                             RectangleF box = GetShapeBox(shape);
 
-if (box.Width < 2 || box.Height < 2)
-    continue;
+                            if (!IsUsefulBox(box))
+                            {
+                                Log(
+                                    "SKIP shape=" + shapeNo +
+                                    " box=" +
+                                    box.Width + "x" + box.Height
+                                );
 
-float area = box.Width * box.Height;
+                                continue;
+                            }
 
-
-
-float ratio = box.Width / Math.Max(1, box.Height);
-
-if (ratio > 8f || ratio < 0.12f)
-    continue;
-
-                            try { _app.ActiveDocument.ClearSelection(); } catch { }
+                            try
+                            {
+                                _app.ActiveDocument.ClearSelection();
+                            }
+                            catch
+                            {
+                            }
 
                             shape.CreateSelection();
-                            Thread.Sleep(120);
+                            Thread.Sleep(150);
 
-                            string baseName = SafeName(Path.GetFileNameWithoutExtension(cdrPath)) + "_p" + p + "_obj" + s;
-                            string png = Path.Combine(cacheRoot, baseName + "_HD.png");
-                            string thumb = Path.Combine(cacheRoot, baseName + "_thumb.jpg");
+                            string baseName =
+                                SafeName(
+                                    Path.GetFileNameWithoutExtension(
+                                        cdrPath
+                                    )
+                                ) +
+                                "_p" + pageNo +
+                                "_obj" + shapeNo;
+
+                            string pngPath = Path.Combine(
+                                cacheRoot,
+                                baseName + "_HD.png"
+                            );
+
+                            string thumbPath = Path.Combine(
+                                cacheRoot,
+                                baseName + "_thumb.jpg"
+                            );
 
                             CopySelectedOrShape(shape);
-                            Thread.Sleep(220);
+                            Thread.Sleep(250);
 
-                            if (SaveClipboardArtwork(png, thumb))
+                            if (!SaveClipboardArtwork(
+                                    pngPath,
+                                    thumbPath))
                             {
-                                results.Add(CreateRecord(cdrPath, thumb, png, p, designNo, "OBJECT-HD", 1));
-                                Log("OBJECT OK: " + png);
-                                designNo++;
+                                Log(
+                                    "EXPORT FAILED shape=" +
+                                    shapeNo
+                                );
+
+                                continue;
                             }
+
+                            if (!IsUsefulExport(pngPath))
+                            {
+                                SafeDelete(pngPath);
+                                SafeDelete(thumbPath);
+
+                                Log(
+                                    "DELETE BAD EXPORT shape=" +
+                                    shapeNo
+                                );
+
+                                continue;
+                            }
+
+                            results.Add(
+                                CreateRecord(
+                                    cdrPath,
+                                    thumbPath,
+                                    pngPath,
+                                    pageNo,
+                                    designNo,
+                                    "OBJECT-HD",
+                                    1
+                                )
+                            );
+
+                            Log(
+                                "OBJECT OK page=" + pageNo +
+                                " shape=" + shapeNo +
+                                " design=" + designNo
+                            );
+
+                            designNo++;
                         }
                         catch (Exception ex)
                         {
-                            Log("Object export failed shape=" + s + " : " + ex.Message);
+                            Log(
+                                "OBJECT FAILED page=" +
+                                pageNo +
+                                " shape=" +
+                                shapeNo +
+                                " error=" +
+                                ex.Message
+                            );
                         }
                     }
                 }
@@ -181,117 +200,176 @@ if (ratio > 8f || ratio < 0.12f)
                     if (doc != null)
                         doc.Close();
                 }
-                catch { }
+                catch
+                {
+                }
             }
 
             Log("RESULTS: " + results.Count);
+
             return results;
+        }
+
+        private bool IsUsableShape(dynamic shape)
+        {
+            try
+            {
+                int type = Convert.ToInt32(shape.Type);
+
+                // CorelDRAW guideline
+                if (type == 6)
+                    return false;
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                bool visible = Convert.ToBoolean(shape.Visible);
+
+                if (!visible)
+                    return false;
+            }
+            catch
+            {
+            }
+
+            return true;
+        }
+
+        private bool IsUsefulBox(RectangleF box)
+        {
+            if (box.Width < 2f || box.Height < 2f)
+                return false;
+
+            float ratio =
+                box.Width / Math.Max(0.001f, box.Height);
+
+            if (ratio > 7f || ratio < 0.14f)
+                return false;
+
+            float area = box.Width * box.Height;
+
+            if (area < 4f)
+                return false;
+
+            return true;
+        }
+
+        private bool IsUsefulExport(string imagePath)
+        {
+            try
+            {
+                if (!File.Exists(imagePath))
+                    return false;
+
+                using (Bitmap bmp = new Bitmap(imagePath))
+                {
+                    if (bmp.Width < 40 || bmp.Height < 40)
+                        return false;
+
+                    double ratio =
+                        bmp.Width /
+                        (double)Math.Max(1, bmp.Height);
+
+                    if (ratio > 7.0 || ratio < 0.14)
+                        return false;
+
+                    int dark = 0;
+                    int nearWhite = 0;
+                    int total = 0;
+
+                    int stepX = Math.Max(1, bmp.Width / 80);
+                    int stepY = Math.Max(1, bmp.Height / 80);
+
+                    for (int y = 0;
+                         y < bmp.Height;
+                         y += stepY)
+                    {
+                        for (int x = 0;
+                             x < bmp.Width;
+                             x += stepX)
+                        {
+                            Color c = bmp.GetPixel(x, y);
+
+                            int bright =
+                                (c.R + c.G + c.B) / 3;
+
+                            int max =
+                                Math.Max(
+                                    c.R,
+                                    Math.Max(c.G, c.B)
+                                );
+
+                            int min =
+                                Math.Min(
+                                    c.R,
+                                    Math.Min(c.G, c.B)
+                                );
+
+                            int saturation = max - min;
+
+                            if (bright < 70)
+                                dark++;
+
+                            if (bright > 245 &&
+                                saturation < 15)
+                            {
+                                nearWhite++;
+                            }
+
+                            total++;
+                        }
+                    }
+
+                    if (total == 0)
+                        return false;
+
+                    double darkRatio =
+                        dark / (double)total;
+
+                    double whiteRatio =
+                        nearWhite / (double)total;
+
+                    // Almost completely empty
+                    if (whiteRatio > 0.995)
+                        return false;
+
+                    // Almost completely solid black rectangle/polygon
+                    if (darkRatio > 0.92)
+                        return false;
+
+                    return true;
+                }
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private void CleanOldImages(string cacheRoot)
         {
             try
             {
-                foreach (string f in Directory.GetFiles(cacheRoot, "*.jpg"))
-                    File.Delete(f);
-
-                foreach (string f in Directory.GetFiles(cacheRoot, "*.png"))
-                    File.Delete(f);
-            }
-            catch { }
-        }
-
-        private bool SelectAllPageShapes(dynamic page, int shapeCount)
-        {
-            try { _app.ActiveDocument.ClearSelection(); } catch { }
-
-            bool any = false;
-
-            for (int i = 1; i <= shapeCount; i++)
-            {
-                try
+                foreach (
+                    string file in
+                    Directory.GetFiles(cacheRoot, "*.jpg"))
                 {
-                    dynamic sh = page.Shapes[i];
-
-                    if (!any)
-                    {
-                        sh.CreateSelection();
-                        any = true;
-                    }
-                    else
-                    {
-                        try { sh.AddToSelection(); }
-                        catch { try { sh.Selected = true; } catch { } }
-                    }
-                }
-                catch { }
-            }
-
-            return any;
-        }
-
-        private List<List<int>> BuildGroups(dynamic page, int shapeCount)
-        {
-            var groups = new List<List<int>>();
-            var used = new bool[shapeCount + 1];
-
-            for (int i = 1; i <= shapeCount; i++)
-            {
-                if (used[i]) continue;
-
-                var group = new List<int>();
-                group.Add(i);
-                used[i] = true;
-
-                RectangleF box = GetShapeBox(page.Shapes[i]);
-
-                for (int j = i + 1; j <= shapeCount; j++)
-                {
-                    if (used[j]) continue;
-
-                    RectangleF b = GetShapeBox(page.Shapes[j]);
-
-                    if (IsNear(box, b))
-                    {
-                        group.Add(j);
-                        used[j] = true;
-                        box = Union(box, b);
-                    }
+                    File.Delete(file);
                 }
 
-                groups.Add(group);
-            }
-
-            return groups;
-        }
-
-        private bool SelectGroup(dynamic page, List<int> group)
-        {
-            try { _app.ActiveDocument.ClearSelection(); } catch { }
-
-            bool any = false;
-
-            foreach (int idx in group)
-            {
-                try
+                foreach (
+                    string file in
+                    Directory.GetFiles(cacheRoot, "*.png"))
                 {
-                    dynamic sh = page.Shapes[idx];
-
-                    if (!any)
-                    {
-                        sh.CreateSelection();
-                        any = true;
-                    }
-                    else
-                    {
-                        try { sh.AddToSelection(); }
-                        catch { try { sh.Selected = true; } catch { } }
-                    }
+                    File.Delete(file);
                 }
-                catch { }
             }
-
-            return any;
+            catch
+            {
+            }
         }
 
         private void CopySelectedOrShape(dynamic shape)
@@ -301,16 +379,22 @@ if (ratio > 8f || ratio < 0.12f)
                 CopyActiveSelection();
                 return;
             }
-            catch { }
+            catch
+            {
+            }
 
             try
             {
                 shape.Copy();
                 return;
             }
-            catch { }
+            catch
+            {
+            }
 
-            throw new InvalidOperationException("Copy failed.");
+            throw new InvalidOperationException(
+                "Copy failed."
+            );
         }
 
         private void CopyActiveSelection()
@@ -320,167 +404,436 @@ if (ratio > 8f || ratio < 0.12f)
                 _app.ActiveSelection.Copy();
                 return;
             }
-            catch { }
+            catch
+            {
+            }
 
             try
             {
                 _app.ActiveDocument.Selection.Copy();
                 return;
             }
-            catch { }
+            catch
+            {
+            }
 
             try
             {
                 _app.ActiveDocument.ActiveSelection.Copy();
                 return;
             }
-            catch { }
+            catch
+            {
+            }
 
-            throw new InvalidOperationException("Active selection copy failed.");
+            throw new InvalidOperationException(
+                "Active selection copy failed."
+            );
         }
 
-        private bool SaveClipboardArtwork(string pngPath, string thumbPath)
+        private bool SaveClipboardArtwork(
+            string pngPath,
+            string thumbPath)
         {
             try
             {
-                Image img = Clipboard.GetImage();
+                Image image = Clipboard.GetImage();
 
-                if (img != null)
+                if (image != null)
                 {
-                    SaveFit(img, pngPath, HD_SIZE, ImageFormat.Png);
-                    SaveFit(img, thumbPath, THUMB_SIZE, ImageFormat.Jpeg);
-                    img.Dispose();
+                    SaveFit(
+                        image,
+                        pngPath,
+                        HD_SIZE,
+                        ImageFormat.Png
+                    );
+
+                    SaveFit(
+                        image,
+                        thumbPath,
+                        THUMB_SIZE,
+                        ImageFormat.Jpeg
+                    );
+
+                    image.Dispose();
+
                     return true;
                 }
 
-                using (Metafile mf = GetEnhancedMetafileFromClipboard())
+                using (
+                    Metafile metafile =
+                        GetEnhancedMetafileFromClipboard())
                 {
-                    if (mf == null)
+                    if (metafile == null)
                         return false;
 
-                    SaveFit(mf, pngPath, HD_SIZE, ImageFormat.Png);
-                    SaveFit(mf, thumbPath, THUMB_SIZE, ImageFormat.Jpeg);
+                    SaveFit(
+                        metafile,
+                        pngPath,
+                        HD_SIZE,
+                        ImageFormat.Png
+                    );
+
+                    SaveFit(
+                        metafile,
+                        thumbPath,
+                        THUMB_SIZE,
+                        ImageFormat.Jpeg
+                    );
+
                     return true;
                 }
             }
             catch (Exception ex)
             {
-                Log("SaveClipboardArtwork failed: " + ex.Message);
+                Log(
+                    "SaveClipboardArtwork failed: " +
+                    ex.Message
+                );
+
                 return false;
             }
         }
 
-        private void SaveFit(Image source, string outputPath, int maxSize, ImageFormat format)
+        private void SaveFit(
+            Image source,
+            string outputPath,
+            int maxSize,
+            ImageFormat format)
         {
-            int sw = source.Width <= 0 ? maxSize : source.Width;
-            int sh = source.Height <= 0 ? maxSize : source.Height;
+            int sourceWidth =
+                source.Width <= 0
+                    ? maxSize
+                    : source.Width;
 
-            double scale = Math.Min(maxSize / (double)sw, maxSize / (double)sh);
-            if (scale <= 0) scale = 1;
+            int sourceHeight =
+                source.Height <= 0
+                    ? maxSize
+                    : source.Height;
 
-            int w = Math.Max(1, (int)(sw * scale));
-            int h = Math.Max(1, (int)(sh * scale));
+            double scale = Math.Min(
+                maxSize / (double)sourceWidth,
+                maxSize / (double)sourceHeight
+            );
 
-            using (Bitmap bmp = new Bitmap(w, h))
+            if (scale <= 0)
+                scale = 1;
+
+            int width = Math.Max(
+                1,
+                (int)(sourceWidth * scale)
+            );
+
+            int height = Math.Max(
+                1,
+                (int)(sourceHeight * scale)
+            );
+
+            using (
+                Bitmap bitmap =
+                    new Bitmap(
+                        width,
+                        height,
+                        PixelFormat.Format24bppRgb
+                    ))
             {
-                using (Graphics g = Graphics.FromImage(bmp))
+                using (
+                    Graphics graphics =
+                        Graphics.FromImage(bitmap))
                 {
-                    g.Clear(Color.White);
-                    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-                    g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
-                    g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
-                    g.DrawImage(source, 0, 0, w, h);
+                    graphics.Clear(Color.White);
+
+                    graphics.InterpolationMode =
+                        System.Drawing.Drawing2D
+                            .InterpolationMode
+                            .HighQualityBicubic;
+
+                    graphics.SmoothingMode =
+                        System.Drawing.Drawing2D
+                            .SmoothingMode
+                            .HighQuality;
+
+                    graphics.PixelOffsetMode =
+                        System.Drawing.Drawing2D
+                            .PixelOffsetMode
+                            .HighQuality;
+
+                    graphics.DrawImage(
+                        source,
+                        0,
+                        0,
+                        width,
+                        height
+                    );
                 }
 
-                bmp.Save(outputPath, format);
+                bitmap.Save(outputPath, format);
             }
         }
 
         private RectangleF GetShapeBox(dynamic shape)
         {
-            float x = ToFloat(GetAny(shape, "LeftX", "PositionX", "CenterX"));
-            float y = ToFloat(GetAny(shape, "TopY", "PositionY", "CenterY"));
-            float w = Math.Abs(ToFloat(GetAny(shape, "SizeWidth", "Width")));
-            float h = Math.Abs(ToFloat(GetAny(shape, "SizeHeight", "Height")));
+            float x = ToFloat(
+                GetAny(
+                    shape,
+                    "LeftX",
+                    "PositionX",
+                    "CenterX"
+                )
+            );
 
-            if (w <= 0) w = 1;
-            if (h <= 0) h = 1;
+            float y = ToFloat(
+                GetAny(
+                    shape,
+                    "TopY",
+                    "PositionY",
+                    "CenterY"
+                )
+            );
 
-            return new RectangleF(x, y, w, h);
+            float width = Math.Abs(
+                ToFloat(
+                    GetAny(
+                        shape,
+                        "SizeWidth",
+                        "Width"
+                    )
+                )
+            );
+
+            float height = Math.Abs(
+                ToFloat(
+                    GetAny(
+                        shape,
+                        "SizeHeight",
+                        "Height"
+                    )
+                )
+            );
+
+            if (width <= 0)
+                width = 1;
+
+            if (height <= 0)
+                height = 1;
+
+            return new RectangleF(
+                x,
+                y,
+                width,
+                height
+            );
         }
 
-        private bool IsNear(RectangleF a, RectangleF b)
+        private DesignRecord CreateRecord(
+            string cdrPath,
+            string thumbPath,
+            string pngPath,
+            int pageNo,
+            int designNo,
+            string mode,
+            int shapeCount)
         {
-            RectangleF aa = a;
-            float pad = Math.Max(a.Width, a.Height) * 0.65f;
-            if (pad < 0.20f) pad = 0.20f;
-            aa.Inflate(pad, pad);
-            return aa.IntersectsWith(b);
+            var record =
+                (DesignRecord)Activator.CreateInstance(
+                    typeof(DesignRecord),
+                    true
+                );
+
+            SetAny(
+                record,
+                new[]
+                {
+                    "CdrPath",
+                    "FilePath",
+                    "FullPath",
+                    "Path"
+                },
+                cdrPath
+            );
+
+            SetAny(
+                record,
+                new[]
+                {
+                    "ThumbnailPath",
+                    "ThumbPath"
+                },
+                thumbPath
+            );
+
+            SetAny(
+                record,
+                new[]
+                {
+                    "PngPath",
+                    "PreviewPath",
+                    "ImagePath"
+                },
+                pngPath
+            );
+
+            SetAny(
+                record,
+                new[]
+                {
+                    "PageNumber",
+                    "PageNo",
+                    "Page"
+                },
+                pageNo
+            );
+
+            SetAny(
+                record,
+                new[]
+                {
+                    "DesignNumber",
+                    "DesignNo",
+                    "ObjectNumber",
+                    "ObjectNo",
+                    "ShapeNumber",
+                    "ShapeNo"
+                },
+                designNo
+            );
+
+            SetAny(
+                record,
+                new[]
+                {
+                    "FileName",
+                    "CdrFileName",
+                    "Name"
+                },
+                Path.GetFileName(cdrPath)
+            );
+
+            SetAny(
+                record,
+                new[]
+                {
+                    "FolderPath",
+                    "FullFolderPath"
+                },
+                Path.GetDirectoryName(cdrPath)
+            );
+
+            SetAny(
+                record,
+                new[]
+                {
+                    "ExportMode",
+                    "Mode"
+                },
+                mode
+            );
+
+            SetAny(
+                record,
+                new[]
+                {
+                    "ShapeCount",
+                    "Shapes"
+                },
+                shapeCount
+            );
+
+            return record;
         }
 
-        private RectangleF Union(RectangleF a, RectangleF b)
-        {
-            float x1 = Math.Min(a.Left, b.Left);
-            float y1 = Math.Min(a.Top, b.Top);
-            float x2 = Math.Max(a.Right, b.Right);
-            float y2 = Math.Max(a.Bottom, b.Bottom);
-            return RectangleF.FromLTRB(x1, y1, x2, y2);
-        }
-
-        private DesignRecord CreateRecord(string cdrPath, string thumbPath, string pngPath, int pageNo, int designNo, string mode, int shapeCount)
-        {
-            var rec = (DesignRecord)Activator.CreateInstance(typeof(DesignRecord), true);
-
-            SetAny(rec, new[] { "CdrPath", "FilePath", "FullPath", "Path" }, cdrPath);
-            SetAny(rec, new[] { "ThumbnailPath", "ThumbPath" }, thumbPath);
-            SetAny(rec, new[] { "PngPath", "PreviewPath", "ImagePath" }, pngPath);
-            SetAny(rec, new[] { "PageNumber", "PageNo", "Page" }, pageNo);
-            SetAny(rec, new[] { "DesignNumber", "DesignNo", "ObjectNumber", "ObjectNo", "ShapeNumber", "ShapeNo" }, designNo);
-            SetAny(rec, new[] { "FileName", "CdrFileName", "Name" }, Path.GetFileName(cdrPath));
-            SetAny(rec, new[] { "FolderPath", "FullFolderPath" }, Path.GetDirectoryName(cdrPath));
-            SetAny(rec, new[] { "ExportMode", "Mode" }, mode);
-            SetAny(rec, new[] { "ShapeCount", "Shapes" }, shapeCount);
-
-            return rec;
-        }
-
-        private object GetAny(object obj, params string[] names)
+        private object GetAny(
+            object obj,
+            params string[] names)
         {
             foreach (string name in names)
             {
                 try
                 {
-                    return obj.GetType().InvokeMember(name, BindingFlags.GetProperty, null, obj, null);
+                    return obj
+                        .GetType()
+                        .InvokeMember(
+                            name,
+                            BindingFlags.GetProperty,
+                            null,
+                            obj,
+                            null
+                        );
                 }
-                catch { }
+                catch
+                {
+                }
             }
 
             return 0;
         }
 
-        private float ToFloat(object v)
+        private float ToFloat(object value)
         {
-            try { return Convert.ToSingle(v); }
-            catch { return 0; }
+            try
+            {
+                return Convert.ToSingle(value);
+            }
+            catch
+            {
+                return 0;
+            }
         }
 
-        private void SetAny(object obj, string[] names, object value)
+        private void SetAny(
+            object obj,
+            string[] names,
+            object value)
         {
-            Type t = obj.GetType();
+            Type type = obj.GetType();
 
             foreach (string name in names)
             {
-                var p = t.GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                if (p != null && p.CanWrite)
+                var property = type.GetProperty(
+                    name,
+                    BindingFlags.Public |
+                    BindingFlags.NonPublic |
+                    BindingFlags.Instance
+                );
+
+                if (property != null &&
+                    property.CanWrite)
                 {
-                    p.SetValue(obj, Convert.ChangeType(value, Nullable.GetUnderlyingType(p.PropertyType) ?? p.PropertyType), null);
+                    property.SetValue(
+                        obj,
+                        Convert.ChangeType(
+                            value,
+                            Nullable.GetUnderlyingType(
+                                property.PropertyType
+                            ) ??
+                            property.PropertyType
+                        ),
+                        null
+                    );
+
                     return;
                 }
 
-                var f = t.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                if (f != null)
+                var field = type.GetField(
+                    name,
+                    BindingFlags.Public |
+                    BindingFlags.NonPublic |
+                    BindingFlags.Instance
+                );
+
+                if (field != null)
                 {
-                    f.SetValue(obj, Convert.ChangeType(value, Nullable.GetUnderlyingType(f.FieldType) ?? f.FieldType));
+                    field.SetValue(
+                        obj,
+                        Convert.ChangeType(
+                            value,
+                            Nullable.GetUnderlyingType(
+                                field.FieldType
+                            ) ??
+                            field.FieldType
+                        )
+                    );
+
                     return;
                 }
             }
@@ -495,11 +848,18 @@ if (ratio > 8f || ratio < 0.12f)
 
             try
             {
-                IntPtr h = GetClipboardData(CF_ENHMETAFILE);
-                if (h == IntPtr.Zero)
+                IntPtr handle =
+                    GetClipboardData(CF_ENHMETAFILE);
+
+                if (handle == IntPtr.Zero)
                     return null;
 
-                IntPtr copy = CopyEnhMetaFile(h, IntPtr.Zero);
+                IntPtr copy =
+                    CopyEnhMetaFile(
+                        handle,
+                        IntPtr.Zero
+                    );
+
                 if (copy == IntPtr.Zero)
                     return null;
 
@@ -513,19 +873,43 @@ if (ratio > 8f || ratio < 0.12f)
 
         private string SafeName(string name)
         {
-            foreach (char c in Path.GetInvalidFileNameChars())
-                name = name.Replace(c, '_');
+            foreach (
+                char character in
+                Path.GetInvalidFileNameChars())
+            {
+                name = name.Replace(character, '_');
+            }
 
             return name;
         }
 
-        private void Log(string msg)
+        private void SafeDelete(string path)
         {
             try
             {
-                File.AppendAllText(_logFile, DateTime.Now.ToString("HH:mm:ss") + " - " + msg + Environment.NewLine);
+                if (File.Exists(path))
+                    File.Delete(path);
             }
-            catch { }
+            catch
+            {
+            }
+        }
+
+        private void Log(string message)
+        {
+            try
+            {
+                File.AppendAllText(
+                    _logFile,
+                    DateTime.Now.ToString("HH:mm:ss") +
+                    " - " +
+                    message +
+                    Environment.NewLine
+                );
+            }
+            catch
+            {
+            }
         }
 
         public void Dispose()
@@ -535,21 +919,27 @@ if (ratio > 8f || ratio < 0.12f)
                 if (_app != null)
                     _app.Quit();
             }
-            catch { }
+            catch
+            {
+            }
 
             _app = null;
         }
 
         [DllImport("user32.dll")]
-        private static extern bool OpenClipboard(IntPtr hWndNewOwner);
+        private static extern bool OpenClipboard(
+            IntPtr hWndNewOwner);
 
         [DllImport("user32.dll")]
         private static extern bool CloseClipboard();
 
         [DllImport("user32.dll")]
-        private static extern IntPtr GetClipboardData(uint uFormat);
+        private static extern IntPtr GetClipboardData(
+            uint uFormat);
 
         [DllImport("gdi32.dll")]
-        private static extern IntPtr CopyEnhMetaFile(IntPtr hemfSrc, IntPtr lpszFile);
+        private static extern IntPtr CopyEnhMetaFile(
+            IntPtr hemfSrc,
+            IntPtr lpszFile);
     }
 }
