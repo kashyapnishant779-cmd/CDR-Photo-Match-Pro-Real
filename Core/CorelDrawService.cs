@@ -321,138 +321,195 @@ namespace CDRPhotoMatchPro.Core
             return list;
         }
 
-        private List<List<int>> BuildSmartGroups(
-            List<ShapeInfo> shapes)
+        private List<List<int>> BuildSmartGroups(List<ShapeInfo> shapes)
+{
+    var groups = new List<List<int>>();
+
+    if (shapes == null || shapes.Count == 0)
+        return groups;
+
+    var ordered = new List<ShapeInfo>(shapes);
+
+    ordered.Sort(
+        delegate(ShapeInfo a, ShapeInfo b)
         {
-            var groups = new List<List<int>>();
+            float ax = a.Box.Left + a.Box.Width / 2f;
+            float bx = b.Box.Left + b.Box.Width / 2f;
 
-            if (shapes == null || shapes.Count == 0)
-                return groups;
+            int xCompare = ax.CompareTo(bx);
 
-            bool[] used = new bool[shapes.Count];
+            if (xCompare != 0)
+                return xCompare;
 
-            float medianSize = GetMedianSize(shapes);
-            float joinGap = Math.Max(1.5f, medianSize * 0.55f);
+            return a.Box.Top.CompareTo(b.Box.Top);
+        }
+    );
 
-            for (int start = 0;
-                 start < shapes.Count;
-                 start++)
+    bool[] used = new bool[ordered.Count];
+
+    for (int i = 0; i < ordered.Count; i++)
+    {
+        if (used[i])
+            continue;
+
+        var group = new List<int>();
+        group.Add(ordered[i].Index);
+        used[i] = true;
+
+        RectangleF groupBox = ordered[i].Box;
+        int addedCount = 1;
+
+        bool added;
+
+        do
+        {
+            added = false;
+
+            int bestIndex = -1;
+            float bestDistance = float.MaxValue;
+
+            for (int j = 0; j < ordered.Count; j++)
             {
-                if (used[start])
+                if (used[j])
                     continue;
 
-                var component = new List<int>();
-                var queue = new Queue<int>();
+                RectangleF candidate = ordered[j].Box;
 
-                queue.Enqueue(start);
-                used[start] = true;
+                if (!ShouldJoin(groupBox, candidate, 0))
+                    continue;
 
-                RectangleF groupBox = shapes[start].Box;
+                float groupCenterX =
+                    groupBox.Left + groupBox.Width / 2f;
 
-                while (queue.Count > 0)
+                float candidateCenterX =
+                    candidate.Left + candidate.Width / 2f;
+
+                float xDistance =
+                    Math.Abs(groupCenterX - candidateCenterX);
+
+                float verticalDistance = AxisGap(
+                    groupBox.Top,
+                    groupBox.Bottom,
+                    candidate.Top,
+                    candidate.Bottom
+                );
+
+                float distance =
+                    xDistance + verticalDistance;
+
+                if (distance < bestDistance)
                 {
-                    int current = queue.Dequeue();
-                    ShapeInfo a = shapes[current];
-
-                    component.Add(a.Index);
-                    groupBox = Union(groupBox, a.Box);
-
-                    for (int j = 0; j < shapes.Count; j++)
-                    {
-                        if (used[j])
-                            continue;
-
-                        ShapeInfo b = shapes[j];
-
-                        if (ShouldJoin(
-                                a.Box,
-                                b.Box,
-                                joinGap))
-                        {
-                            used[j] = true;
-                            queue.Enqueue(j);
-                        }
-                    }
-                }
-
-                // Bahut bada component aksar kai designs ko jod deta hai.
-                // Usko rows/columns ke gap se split karte hain.
-                List<List<int>> split =
-                    SplitOversizedComponent(
-                        component,
-                        shapes,
-                        medianSize
-                    );
-
-                for (int i = 0; i < split.Count; i++)
-                {
-                    if (split[i].Count > 0)
-                        groups.Add(split[i]);
+                    bestDistance = distance;
+                    bestIndex = j;
                 }
             }
 
-            return groups;
+            if (bestIndex >= 0 && addedCount < 4)
+            {
+                group.Add(ordered[bestIndex].Index);
+
+                groupBox = Union(
+                    groupBox,
+                    ordered[bestIndex].Box
+                );
+
+                used[bestIndex] = true;
+                addedCount++;
+                added = true;
+            }
         }
+        while (added);
+
+        groups.Add(group);
+    }
+
+    return groups;
+}
 
         private bool ShouldJoin(
-            RectangleF a,
-            RectangleF b,
-            float gap)
+    RectangleF a,
+    RectangleF b,
+    float unusedGap)
+{
+    float aCenterX =
+        a.Left + a.Width / 2f;
+
+    float bCenterX =
+        b.Left + b.Width / 2f;
+
+    float centerDifference =
+        Math.Abs(aCenterX - bCenterX);
+
+    float smallerWidth =
+        Math.Min(a.Width, b.Width);
+
+    float largerHeight =
+        Math.Max(a.Height, b.Height);
+
+    float verticalGap = AxisGap(
+        a.Top,
+        a.Bottom,
+        b.Top,
+        b.Bottom
+    );
+
+    float horizontalOverlap = OverlapAmount(
+        a.Left,
+        a.Right,
+        b.Left,
+        b.Right
+    );
+
+    double overlapRatio =
+        smallerWidth > 0
+            ? horizontalOverlap / smallerWidth
+            : 0;
+
+    bool sameVerticalLine =
+        centerDifference <=
+        Math.Max(1.2f, smallerWidth * 0.42f);
+
+    bool enoughHorizontalOverlap =
+        overlapRatio >= 0.32;
+
+    bool closeVertically =
+        verticalGap <=
+        Math.Max(2.0f, largerHeight * 0.48f);
+
+    // Ek dusre ke upar/neeche aligned pieces:
+    // top + main + drop
+    if (sameVerticalLine &&
+        enoughHorizontalOverlap &&
+        closeVertically)
+    {
+        return true;
+    }
+
+    // Strong overlap ho to same design ka part ho sakta hai.
+    RectangleF intersection =
+        RectangleF.Intersect(a, b);
+
+    if (!intersection.IsEmpty)
+    {
+        float intersectionArea =
+            intersection.Width *
+            intersection.Height;
+
+        float smallerArea =
+            Math.Min(
+                a.Width * a.Height,
+                b.Width * b.Height
+            );
+
+        if (smallerArea > 0 &&
+            intersectionArea / smallerArea >= 0.30f)
         {
-            RectangleF expandedA = a;
-            expandedA.Inflate(gap, gap);
-
-            if (expandedA.IntersectsWith(b))
-                return true;
-
-            float horizontalGap = AxisGap(
-                a.Left,
-                a.Right,
-                b.Left,
-                b.Right
-            );
-
-            float verticalGap = AxisGap(
-                a.Top,
-                a.Bottom,
-                b.Top,
-                b.Bottom
-            );
-
-            bool horizontalOverlap =
-                OverlapAmount(
-                    a.Left,
-                    a.Right,
-                    b.Left,
-                    b.Right
-                ) >
-                Math.Min(a.Width, b.Width) * 0.18f;
-
-            bool verticalOverlap =
-                OverlapAmount(
-                    a.Top,
-                    a.Bottom,
-                    b.Top,
-                    b.Bottom
-                ) >
-                Math.Min(a.Height, b.Height) * 0.18f;
-
-            // Pendant ke vertically stacked pieces
-            if (horizontalOverlap &&
-                verticalGap <= gap * 1.7f)
-            {
-                return true;
-            }
-
-            // Necklace/ring ke side-by-side connected pieces
-            if (verticalOverlap &&
-                horizontalGap <= gap * 1.7f)
-            {
-                return true;
-            }
-
-            return false;
+            return true;
         }
+    }
+
+    return false;
+}
 
         private List<List<int>> SplitOversizedComponent(
             List<int> component,
