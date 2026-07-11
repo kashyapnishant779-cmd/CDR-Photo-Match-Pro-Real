@@ -39,7 +39,6 @@
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Data" />
     <Reference Include="Microsoft.CSharp" />
-         
   </ItemGroup>
 
   <ItemGroup>
@@ -54,6 +53,7 @@
     <Compile Include="Imaging\ImageFingerprint.cs" />
     <Compile Include="Imaging\DesignMatcher.cs" />
     <Compile Include="Imaging\ImageSegmenter.cs" />
+    <Compile Include="Imaging\ImagePreprocessor.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
 
