@@ -30,12 +30,18 @@ namespace CDRPhotoMatchPro.Imaging
 
             public int Width
             {
-                get { return MaxX - MinX + 1; }
+                get
+                {
+                    return MaxX - MinX + 1;
+                }
             }
 
             public int Height
             {
-                get { return MaxY - MinY + 1; }
+                get
+                {
+                    return MaxY - MinY + 1;
+                }
             }
 
             public Rectangle Bounds
@@ -52,119 +58,150 @@ namespace CDRPhotoMatchPro.Imaging
             }
         }
 
-        public static List<ImageSegment> Split(Bitmap source)
+        private sealed class MaskCandidate
+        {
+            public bool[,] Mask;
+            public Rectangle Bounds;
+            public double Score;
+        }
+
+        public static List<ImageSegment> Split(
+            Bitmap source)
         {
             return Segment(source);
         }
 
-        public static List<ImageSegment> Segment(Bitmap source)
+        public static List<ImageSegment> Segment(
+            Bitmap source)
         {
-            var list = new List<ImageSegment>();
+            var segments =
+                new List<ImageSegment>();
 
-            if (source == null)
-                return list;
+            if (source == null ||
+                source.Width <= 0 ||
+                source.Height <= 0)
+            {
+                return segments;
+            }
 
-            Bitmap clean = ExtractMainDesign(source);
+            Bitmap clean = null;
 
             try
             {
+                clean =
+                    ExtractMainDesign(source);
+
+                if (clean == null)
+                    return segments;
+
+                int width = clean.Width;
+                int height = clean.Height;
+
+                /*
+                 * Exact required order:
+                 *
+                 * 0 = FULL
+                 * 1 = CENTER
+                 * 2 = LEFT
+                 * 3 = RIGHT
+                 * 4 = TOP
+                 * 5 = BOTTOM
+                 */
+
                 AddSegment(
-                    list,
+                    segments,
                     clean,
                     "FULL",
-                    new Rectangle(0, 0, clean.Width, clean.Height),
+                    new Rectangle(
+                        0,
+                        0,
+                        width,
+                        height
+                    ),
                     1.00
                 );
 
-                int w = clean.Width;
-                int h = clean.Height;
-
-                // Jewellery ke main vertical parts.
                 AddSegment(
-                    list,
+                    segments,
                     clean,
-                    "TOP",
-                    new Rectangle(0, 0, w, h * 40 / 100),
-                    0.72
+                    "CENTER",
+                    new Rectangle(
+                        width * 17 / 100,
+                        height * 17 / 100,
+                        width * 66 / 100,
+                        height * 66 / 100
+                    ),
+                    0.95
                 );
 
                 AddSegment(
-                    list,
-                    clean,
-                    "MIDDLE",
-                    new Rectangle(0, h * 25 / 100, w, h * 50 / 100),
-                    0.92
-                );
-
-                AddSegment(
-                    list,
-                    clean,
-                    "BOTTOM",
-                    new Rectangle(0, h * 60 / 100, w, h * 40 / 100),
-                    0.78
-                );
-
-                // Left/right symmetry aur side details.
-                AddSegment(
-                    list,
+                    segments,
                     clean,
                     "LEFT",
-                    new Rectangle(0, h / 10, w * 58 / 100, h * 80 / 100),
-                    0.56
+                    new Rectangle(
+                        0,
+                        height * 8 / 100,
+                        width * 58 / 100,
+                        height * 84 / 100
+                    ),
+                    0.68
                 );
 
                 AddSegment(
-                    list,
+                    segments,
                     clean,
                     "RIGHT",
-                    new Rectangle(w * 42 / 100, h / 10, w * 58 / 100, h * 80 / 100),
-                    0.56
+                    new Rectangle(
+                        width * 42 / 100,
+                        height * 8 / 100,
+                        width * 58 / 100,
+                        height * 84 / 100
+                    ),
+                    0.68
                 );
+
+                AddSegment(
+                    segments,
+                    clean,
+                    "TOP",
+                    new Rectangle(
+                        width * 6 / 100,
+                        0,
+                        width * 88 / 100,
+                        height * 48 / 100
+                    ),
+                    0.74
+                );
+
+                AddSegment(
+                    segments,
+                    clean,
+                    "BOTTOM",
+                    new Rectangle(
+                        width * 6 / 100,
+                        height * 52 / 100,
+                        width * 88 / 100,
+                        height * 48 / 100
+                    ),
+                    0.78
+                );
+            }
+            catch
+            {
+                DisposeSegments(segments);
+                segments.Clear();
             }
             finally
             {
-                clean.Dispose();
+                if (clean != null)
+                    clean.Dispose();
             }
 
-            return list;
+            return segments;
         }
 
-        private static void AddSegment(
-            List<ImageSegment> list,
-            Bitmap source,
-            string name,
-            Rectangle bounds,
-            double weight)
-        {
-            Rectangle imageBounds =
-                new Rectangle(0, 0, source.Width, source.Height);
-
-            bounds.Intersect(imageBounds);
-
-            if (bounds.Width < 20 || bounds.Height < 20)
-                return;
-
-            Bitmap crop =
-                source.Clone(
-                    bounds,
-                    PixelFormat.Format24bppRgb
-                );
-
-            Bitmap normalized = NormalizeSilhouette(crop);
-            crop.Dispose();
-
-            list.Add(
-                new ImageSegment
-                {
-                    Name = name,
-                    Bitmap = normalized,
-                    Bounds = bounds,
-                    Weight = weight
-                }
-            );
-        }
-
-        public static Bitmap ExtractMainDesign(Bitmap source)
+        public static Bitmap ExtractMainDesign(
+            Bitmap source)
         {
             Bitmap working =
                 ResizeKeep(
@@ -175,48 +212,52 @@ namespace CDRPhotoMatchPro.Imaging
 
             try
             {
-                bool[,] mask = BuildForegroundMask(working);
-
-                CleanMask(mask, working.Width, working.Height);
-
-                List<Component> components =
-                    FindComponents(
-                        mask,
-                        working.Width,
-                        working.Height
+                MaskCandidate best =
+                    BuildBestMaskCandidate(
+                        working
                     );
 
-                Rectangle jewelleryBounds =
-                    SelectJewelleryBounds(
-                        components,
-                        working.Width,
-                        working.Height
-                    );
-
-                if (jewelleryBounds == Rectangle.Empty)
+                if (best == null ||
+                    best.Mask == null ||
+                    best.Bounds == Rectangle.Empty)
                 {
-                    return CreateFallbackSilhouette(working);
+                    return CreateFallbackSilhouette(
+                        working
+                    );
                 }
 
-                jewelleryBounds =
+                Rectangle paddedBounds =
                     AddPadding(
-                        jewelleryBounds,
+                        best.Bounds,
                         working.Width,
                         working.Height
                     );
 
-                Bitmap result =
+                Bitmap rendered =
                     RenderMaskCrop(
-                        mask,
-                        jewelleryBounds
+                        best.Mask,
+                        paddedBounds
                     );
 
-                Bitmap normalized =
-                    NormalizeSilhouette(result);
+                try
+                {
+                    Bitmap normalized =
+                        NormalizeSilhouette(
+                            rendered
+                        );
 
-                result.Dispose();
-
-                return normalized;
+                    return normalized;
+                }
+                finally
+                {
+                    rendered.Dispose();
+                }
+            }
+            catch
+            {
+                return CreateFallbackSilhouette(
+                    working
+                );
             }
             finally
             {
@@ -224,138 +265,732 @@ namespace CDRPhotoMatchPro.Imaging
             }
         }
 
-        private static bool[,] BuildForegroundMask(Bitmap bitmap)
+        private static MaskCandidate BuildBestMaskCandidate(
+            Bitmap bitmap)
         {
-            int width = bitmap.Width;
-            int height = bitmap.Height;
+            var candidates =
+                new List<MaskCandidate>();
 
-            var mask = new bool[width, height];
+            int[,] gray =
+                ReadGrayValues(bitmap);
 
             Color background =
                 EstimateBackground(bitmap);
 
-            int backgroundGray =
-                Gray(background);
+            int otsuThreshold =
+                CalculateOtsuThreshold(
+                    gray,
+                    bitmap.Width,
+                    bitmap.Height
+                );
 
-            for (int y = 0; y < height; y++)
+            AddMaskCandidate(
+                candidates,
+                BuildDarkMask(
+                    bitmap,
+                    gray,
+                    otsuThreshold
+                ),
+                bitmap.Width,
+                bitmap.Height
+            );
+
+            AddMaskCandidate(
+                candidates,
+                BuildAdaptiveDarkMask(
+                    gray,
+                    bitmap.Width,
+                    bitmap.Height
+                ),
+                bitmap.Width,
+                bitmap.Height
+            );
+
+            AddMaskCandidate(
+                candidates,
+                BuildBackgroundDifferenceMask(
+                    bitmap,
+                    background
+                ),
+                bitmap.Width,
+                bitmap.Height
+            );
+
+            AddMaskCandidate(
+                candidates,
+                BuildColourJewelleryMask(
+                    bitmap,
+                    background
+                ),
+                bitmap.Width,
+                bitmap.Height
+            );
+
+            AddMaskCandidate(
+                candidates,
+                BuildEdgeRegionMask(
+                    gray,
+                    bitmap.Width,
+                    bitmap.Height
+                ),
+                bitmap.Width,
+                bitmap.Height
+            );
+
+            MaskCandidate best = null;
+            double bestScore =
+                double.MinValue;
+
+            for (int index = 0;
+                 index < candidates.Count;
+                 index++)
             {
-                for (int x = 0; x < width; x++)
+                MaskCandidate candidate =
+                    candidates[index];
+
+                if (candidate == null)
+                    continue;
+
+                if (candidate.Score >
+                    bestScore)
                 {
-                    Color c = bitmap.GetPixel(x, y);
+                    bestScore =
+                        candidate.Score;
 
-                    int gray = Gray(c);
-                    int max = Math.Max(c.R, Math.Max(c.G, c.B));
-                    int min = Math.Min(c.R, Math.Min(c.G, c.B));
-                    int saturation = max - min;
+                    best = candidate;
+                }
+            }
 
-                    int backgroundDifference =
-                        Math.Abs(c.R - background.R) +
-                        Math.Abs(c.G - background.G) +
-                        Math.Abs(c.B - background.B);
+            return best;
+        }
 
-                    bool skin =
-                        c.R > 125 &&
-                        c.G > 65 &&
-                        c.B > 35 &&
-                        c.R > c.G + 18 &&
-                        c.G > c.B + 8;
+        private static void AddMaskCandidate(
+            List<MaskCandidate> candidates,
+            bool[,] mask,
+            int width,
+            int height)
+        {
+            if (mask == null)
+                return;
 
-                    bool strongSkin =
-                        c.R > 150 &&
-                        c.G > 85 &&
-                        c.B > 55 &&
-                        c.R > c.B + 35;
+            CleanMask(
+                mask,
+                width,
+                height
+            );
 
-                    bool blueRuler =
-                        c.B > 115 &&
-                        c.B > c.R + 18 &&
-                        c.B > c.G + 10;
+            RemoveBorderConnectedNoise(
+                mask,
+                width,
+                height
+            );
 
-                    bool nearWhite =
-                        gray > 235 &&
-                        saturation < 25;
+            CloseSmallGaps(
+                mask,
+                width,
+                height
+            );
 
-                    bool gold =
-                        c.R > 105 &&
-                        c.G > 60 &&
-                        c.R > c.B + 25 &&
-                        c.G > c.B + 10 &&
-                        saturation > 28;
+            List<Component> components =
+                FindComponents(
+                    mask,
+                    width,
+                    height
+                );
 
-                    bool colourfulStone =
-                        saturation > 55 &&
-                        gray > 45 &&
-                        gray < 235 &&
-                        !skin;
+            Rectangle bounds =
+                SelectJewelleryBounds(
+                    components,
+                    width,
+                    height
+                );
 
-                    bool darkJewellery =
-                        gray < 135 &&
-                        saturation < 135;
+            if (bounds == Rectangle.Empty)
+                return;
 
-                    bool differentFromBackground =
-                        backgroundDifference > 95 &&
-                        Math.Abs(gray - backgroundGray) > 22;
+            bool[,] selectedMask =
+                KeepComponentsNearBounds(
+                    mask,
+                    components,
+                    bounds,
+                    width,
+                    height
+                );
 
-                    bool foreground =
-                        gold ||
-                        colourfulStone ||
-                        darkJewellery ||
-                        differentFromBackground;
+            Rectangle selectedBounds =
+                FindMaskBounds(
+                    selectedMask,
+                    width,
+                    height
+                );
 
-                    if (skin || strongSkin || blueRuler || nearWhite)
-                        foreground = false;
+            if (selectedBounds ==
+                Rectangle.Empty)
+            {
+                return;
+            }
 
-                    mask[x, y] = foreground;
+            double score =
+                ScoreMaskCandidate(
+                    selectedMask,
+                    selectedBounds,
+                    width,
+                    height
+                );
+
+            candidates.Add(
+                new MaskCandidate
+                {
+                    Mask = selectedMask,
+                    Bounds = selectedBounds,
+                    Score = score
+                }
+            );
+        }
+
+        private static bool[,] BuildDarkMask(
+            Bitmap bitmap,
+            int[,] gray,
+            int threshold)
+        {
+            int width = bitmap.Width;
+            int height = bitmap.Height;
+
+            bool[,] mask =
+                new bool[width, height];
+
+            int limitedThreshold =
+                ClampInt(
+                    threshold + 12,
+                    75,
+                    205
+                );
+
+            for (int y = 0;
+                 y < height;
+                 y++)
+            {
+                for (int x = 0;
+                     x < width;
+                     x++)
+                {
+                    Color color =
+                        bitmap.GetPixel(x, y);
+
+                    bool excluded =
+                        IsLikelySkin(color) ||
+                        IsNearWhite(color);
+
+                    mask[x, y] =
+                        !excluded &&
+                        gray[x, y] <=
+                        limitedThreshold;
                 }
             }
 
             return mask;
         }
 
-        private static Color EstimateBackground(Bitmap bitmap)
+        private static bool[,] BuildAdaptiveDarkMask(
+            int[,] gray,
+            int width,
+            int height)
         {
-            long red = 0;
-            long green = 0;
-            long blue = 0;
-            int count = 0;
+            bool[,] mask =
+                new bool[width, height];
 
-            int stepX = Math.Max(1, bitmap.Width / 30);
-            int stepY = Math.Max(1, bitmap.Height / 30);
+            int radius =
+                Math.Max(
+                    5,
+                    Math.Min(
+                        width,
+                        height
+                    ) / 35
+                );
 
-            // Border pixels se background estimate.
-            for (int x = 0; x < bitmap.Width; x += stepX)
+            long[,] integral =
+                BuildIntegralImage(
+                    gray,
+                    width,
+                    height
+                );
+
+            for (int y = 0;
+                 y < height;
+                 y++)
             {
-                AddColor(bitmap.GetPixel(x, 0), ref red, ref green, ref blue, ref count);
-                AddColor(bitmap.GetPixel(x, bitmap.Height - 1), ref red, ref green, ref blue, ref count);
+                for (int x = 0;
+                     x < width;
+                     x++)
+                {
+                    int left =
+                        Math.Max(
+                            0,
+                            x - radius
+                        );
+
+                    int top =
+                        Math.Max(
+                            0,
+                            y - radius
+                        );
+
+                    int right =
+                        Math.Min(
+                            width - 1,
+                            x + radius
+                        );
+
+                    int bottom =
+                        Math.Min(
+                            height - 1,
+                            y + radius
+                        );
+
+                    double localAverage =
+                        ReadIntegralAverage(
+                            integral,
+                            left,
+                            top,
+                            right,
+                            bottom
+                        );
+
+                    double difference =
+                        localAverage -
+                        gray[x, y];
+
+                    mask[x, y] =
+                        difference >= 19 &&
+                        gray[x, y] < 220;
+                }
             }
 
-            for (int y = 0; y < bitmap.Height; y += stepY)
+            return mask;
+        }
+
+        private static bool[,] BuildBackgroundDifferenceMask(
+            Bitmap bitmap,
+            Color background)
+        {
+            int width = bitmap.Width;
+            int height = bitmap.Height;
+
+            bool[,] mask =
+                new bool[width, height];
+
+            for (int y = 0;
+                 y < height;
+                 y++)
             {
-                AddColor(bitmap.GetPixel(0, y), ref red, ref green, ref blue, ref count);
-                AddColor(bitmap.GetPixel(bitmap.Width - 1, y), ref red, ref green, ref blue, ref count);
+                for (int x = 0;
+                     x < width;
+                     x++)
+                {
+                    Color color =
+                        bitmap.GetPixel(x, y);
+
+                    int colorDifference =
+                        Math.Abs(
+                            color.R -
+                            background.R
+                        ) +
+                        Math.Abs(
+                            color.G -
+                            background.G
+                        ) +
+                        Math.Abs(
+                            color.B -
+                            background.B
+                        );
+
+                    int grayDifference =
+                        Math.Abs(
+                            Gray(color) -
+                            Gray(background)
+                        );
+
+                    bool excluded =
+                        IsLikelySkin(color) ||
+                        IsNearWhite(color);
+
+                    mask[x, y] =
+                        !excluded &&
+                        (
+                            colorDifference >= 88 ||
+                            grayDifference >= 38
+                        );
+                }
             }
 
-            if (count == 0)
-                return Color.White;
+            return mask;
+        }
 
-            return Color.FromArgb(
-                Clamp((int)(red / count)),
-                Clamp((int)(green / count)),
-                Clamp((int)(blue / count))
+        private static bool[,] BuildColourJewelleryMask(
+            Bitmap bitmap,
+            Color background)
+        {
+            int width = bitmap.Width;
+            int height = bitmap.Height;
+
+            bool[,] mask =
+                new bool[width, height];
+
+            int backgroundGray =
+                Gray(background);
+
+            for (int y = 0;
+                 y < height;
+                 y++)
+            {
+                for (int x = 0;
+                     x < width;
+                     x++)
+                {
+                    Color color =
+                        bitmap.GetPixel(x, y);
+
+                    int maximum =
+                        Math.Max(
+                            color.R,
+                            Math.Max(
+                                color.G,
+                                color.B
+                            )
+                        );
+
+                    int minimum =
+                        Math.Min(
+                            color.R,
+                            Math.Min(
+                                color.G,
+                                color.B
+                            )
+                        );
+
+                    int saturation =
+                        maximum -
+                        minimum;
+
+                    int gray =
+                        Gray(color);
+
+                    bool goldLike =
+                        color.R > 95 &&
+                        color.G > 55 &&
+                        color.R >
+                            color.B + 20 &&
+                        color.G >
+                            color.B + 5 &&
+                        saturation > 24;
+
+                    bool colouredStone =
+                        saturation > 48 &&
+                        gray > 35 &&
+                        gray < 238;
+
+                    bool darkDetail =
+                        gray < 142 &&
+                        Math.Abs(
+                            gray -
+                            backgroundGray
+                        ) > 22;
+
+                    bool excluded =
+                        IsLikelySkin(color) ||
+                        IsNearWhite(color) ||
+                        IsLikelyBlueRuler(color);
+
+                    mask[x, y] =
+                        !excluded &&
+                        (
+                            goldLike ||
+                            colouredStone ||
+                            darkDetail
+                        );
+                }
+            }
+
+            return mask;
+        }
+
+        private static bool[,] BuildEdgeRegionMask(
+            int[,] gray,
+            int width,
+            int height)
+        {
+            bool[,] edges =
+                new bool[width, height];
+
+            for (int y = 1;
+                 y < height - 1;
+                 y++)
+            {
+                for (int x = 1;
+                     x < width - 1;
+                     x++)
+                {
+                    int horizontal =
+                        Math.Abs(
+                            gray[x + 1, y] -
+                            gray[x - 1, y]
+                        );
+
+                    int vertical =
+                        Math.Abs(
+                            gray[x, y + 1] -
+                            gray[x, y - 1]
+                        );
+
+                    int diagonalOne =
+                        Math.Abs(
+                            gray[x + 1, y + 1] -
+                            gray[x - 1, y - 1]
+                        );
+
+                    int diagonalTwo =
+                        Math.Abs(
+                            gray[x + 1, y - 1] -
+                            gray[x - 1, y + 1]
+                        );
+
+                    int strength =
+                        horizontal +
+                        vertical +
+                        diagonalOne / 2 +
+                        diagonalTwo / 2;
+
+                    edges[x, y] =
+                        strength >= 84;
+                }
+            }
+
+            bool[,] expanded =
+                new bool[width, height];
+
+            for (int y = 2;
+                 y < height - 2;
+                 y++)
+            {
+                for (int x = 2;
+                     x < width - 2;
+                     x++)
+                {
+                    int count = 0;
+
+                    for (int yy = y - 2;
+                         yy <= y + 2;
+                         yy++)
+                    {
+                        for (int xx = x - 2;
+                             xx <= x + 2;
+                             xx++)
+                        {
+                            if (edges[xx, yy])
+                                count++;
+                        }
+                    }
+
+                    expanded[x, y] =
+                        count >= 3;
+                }
+            }
+
+            return expanded;
+        }
+
+        private static int[,] ReadGrayValues(
+            Bitmap bitmap)
+        {
+            int width = bitmap.Width;
+            int height = bitmap.Height;
+
+            int[,] values =
+                new int[width, height];
+
+            for (int y = 0;
+                 y < height;
+                 y++)
+            {
+                for (int x = 0;
+                     x < width;
+                     x++)
+                {
+                    values[x, y] =
+                        Gray(
+                            bitmap.GetPixel(
+                                x,
+                                y
+                            )
+                        );
+                }
+            }
+
+            return values;
+        }
+
+        private static int CalculateOtsuThreshold(
+            int[,] gray,
+            int width,
+            int height)
+        {
+            int[] histogram =
+                new int[256];
+
+            int totalPixels =
+                width * height;
+
+            if (totalPixels <= 0)
+                return 160;
+
+            long totalIntensity = 0;
+
+            for (int y = 0;
+                 y < height;
+                 y++)
+            {
+                for (int x = 0;
+                     x < width;
+                     x++)
+                {
+                    int value =
+                        ClampInt(
+                            gray[x, y],
+                            0,
+                            255
+                        );
+
+                    histogram[value]++;
+                    totalIntensity += value;
+                }
+            }
+
+            long backgroundIntensity = 0;
+            int backgroundCount = 0;
+
+            double maximumVariance = -1;
+            int bestThreshold = 160;
+
+            for (int threshold = 0;
+                 threshold < 256;
+                 threshold++)
+            {
+                backgroundCount +=
+                    histogram[threshold];
+
+                if (backgroundCount <= 0)
+                    continue;
+
+                int foregroundCount =
+                    totalPixels -
+                    backgroundCount;
+
+                if (foregroundCount <= 0)
+                    break;
+
+                backgroundIntensity +=
+                    (long)threshold *
+                    histogram[threshold];
+
+                double backgroundMean =
+                    backgroundIntensity /
+                    (double)backgroundCount;
+
+                double foregroundMean =
+                    (
+                        totalIntensity -
+                        backgroundIntensity
+                    ) /
+                    (double)foregroundCount;
+
+                double difference =
+                    backgroundMean -
+                    foregroundMean;
+
+                double variance =
+                    backgroundCount *
+                    (double)foregroundCount *
+                    difference *
+                    difference;
+
+                if (variance >
+                    maximumVariance)
+                {
+                    maximumVariance =
+                        variance;
+
+                    bestThreshold =
+                        threshold;
+                }
+            }
+
+            return ClampInt(
+                bestThreshold,
+                65,
+                215
             );
         }
 
-        private static void AddColor(
-            Color color,
-            ref long red,
-            ref long green,
-            ref long blue,
-            ref int count)
+        private static long[,] BuildIntegralImage(
+            int[,] values,
+            int width,
+            int height)
         {
-            red += color.R;
-            green += color.G;
-            blue += color.B;
-            count++;
+            long[,] integral =
+                new long[
+                    width + 1,
+                    height + 1
+                ];
+
+            for (int y = 1;
+                 y <= height;
+                 y++)
+            {
+                long rowTotal = 0;
+
+                for (int x = 1;
+                     x <= width;
+                     x++)
+                {
+                    rowTotal +=
+                        values[x - 1, y - 1];
+
+                    integral[x, y] =
+                        integral[x, y - 1] +
+                        rowTotal;
+                }
+            }
+
+            return integral;
+        }
+
+        private static double ReadIntegralAverage(
+            long[,] integral,
+            int left,
+            int top,
+            int right,
+            int bottom)
+        {
+            int x1 = left;
+            int y1 = top;
+            int x2 = right + 1;
+            int y2 = bottom + 1;
+
+            long sum =
+                integral[x2, y2] -
+                integral[x1, y2] -
+                integral[x2, y1] +
+                integral[x1, y1];
+
+            int area =
+                Math.Max(
+                    1,
+                    (right - left + 1) *
+                    (bottom - top + 1)
+                );
+
+            return sum /
+                   (double)area;
         }
 
         private static void CleanMask(
@@ -363,35 +998,243 @@ namespace CDRPhotoMatchPro.Imaging
             int width,
             int height)
         {
-            // Do passes: isolated noise hatao aur jewellery ke close pixels jodo.
-            for (int pass = 0; pass < 2; pass++)
+            for (int pass = 0;
+                 pass < 2;
+                 pass++)
             {
-                var copy = new bool[width, height];
+                bool[,] next =
+                    new bool[width, height];
 
-                for (int y = 1; y < height - 1; y++)
+                for (int y = 1;
+                     y < height - 1;
+                     y++)
                 {
-                    for (int x = 1; x < width - 1; x++)
+                    for (int x = 1;
+                         x < width - 1;
+                         x++)
                     {
                         int neighbours =
-                            CountNeighbours(mask, x, y);
+                            CountNeighbours(
+                                mask,
+                                x,
+                                y
+                            );
 
                         if (mask[x, y])
                         {
-                            copy[x, y] = neighbours >= 2;
+                            next[x, y] =
+                                neighbours >= 2;
                         }
                         else
                         {
-                            copy[x, y] = neighbours >= 6;
+                            next[x, y] =
+                                neighbours >= 6;
                         }
                     }
                 }
 
-                for (int y = 0; y < height; y++)
+                CopyMask(
+                    next,
+                    mask,
+                    width,
+                    height
+                );
+            }
+        }
+
+        private static void CloseSmallGaps(
+            bool[,] mask,
+            int width,
+            int height)
+        {
+            for (int pass = 0;
+                 pass < 2;
+                 pass++)
+            {
+                bool[,] next =
+                    new bool[width, height];
+
+                for (int y = 2;
+                     y < height - 2;
+                     y++)
                 {
-                    for (int x = 0; x < width; x++)
-                        mask[x, y] = copy[x, y];
+                    for (int x = 2;
+                         x < width - 2;
+                         x++)
+                    {
+                        int nearby = 0;
+
+                        for (int yy = y - 2;
+                             yy <= y + 2;
+                             yy++)
+                        {
+                            for (int xx = x - 2;
+                                 xx <= x + 2;
+                                 xx++)
+                            {
+                                if (mask[xx, yy])
+                                    nearby++;
+                            }
+                        }
+
+                        next[x, y] =
+                            mask[x, y] ||
+                            nearby >= 11;
+                    }
+                }
+
+                CopyMask(
+                    next,
+                    mask,
+                    width,
+                    height
+                );
+            }
+        }
+
+        private static void RemoveBorderConnectedNoise(
+            bool[,] mask,
+            int width,
+            int height)
+        {
+            bool[,] visited =
+                new bool[width, height];
+
+            var queue =
+                new Queue<Point>();
+
+            for (int x = 0;
+                 x < width;
+                 x++)
+            {
+                EnqueueBorderPoint(
+                    mask,
+                    visited,
+                    queue,
+                    x,
+                    0
+                );
+
+                EnqueueBorderPoint(
+                    mask,
+                    visited,
+                    queue,
+                    x,
+                    height - 1
+                );
+            }
+
+            for (int y = 0;
+                 y < height;
+                 y++)
+            {
+                EnqueueBorderPoint(
+                    mask,
+                    visited,
+                    queue,
+                    0,
+                    y
+                );
+
+                EnqueueBorderPoint(
+                    mask,
+                    visited,
+                    queue,
+                    width - 1,
+                    y
+                );
+            }
+
+            int[] differenceX =
+            {
+                -1, 0, 1,
+                -1, 1,
+                -1, 0, 1
+            };
+
+            int[] differenceY =
+            {
+                -1, -1, -1,
+                0, 0,
+                1, 1, 1
+            };
+
+            while (queue.Count > 0)
+            {
+                Point point =
+                    queue.Dequeue();
+
+                mask[point.X, point.Y] =
+                    false;
+
+                for (int index = 0;
+                     index < 8;
+                     index++)
+                {
+                    int nextX =
+                        point.X +
+                        differenceX[index];
+
+                    int nextY =
+                        point.Y +
+                        differenceY[index];
+
+                    if (nextX < 0 ||
+                        nextY < 0 ||
+                        nextX >= width ||
+                        nextY >= height)
+                    {
+                        continue;
+                    }
+
+                    if (!mask[nextX, nextY] ||
+                        visited[nextX, nextY])
+                    {
+                        continue;
+                    }
+
+                    visited[nextX, nextY] =
+                        true;
+
+                    queue.Enqueue(
+                        new Point(
+                            nextX,
+                            nextY
+                        )
+                    );
                 }
             }
+        }
+
+        private static void EnqueueBorderPoint(
+            bool[,] mask,
+            bool[,] visited,
+            Queue<Point> queue,
+            int x,
+            int y)
+        {
+            if (x < 0 ||
+                y < 0 ||
+                x >= mask.GetLength(0) ||
+                y >= mask.GetLength(1))
+            {
+                return;
+            }
+
+            if (!mask[x, y] ||
+                visited[x, y])
+            {
+                return;
+            }
+
+            visited[x, y] = true;
+
+            queue.Enqueue(
+                new Point(
+                    x,
+                    y
+                )
+            );
         }
 
         private static int CountNeighbours(
@@ -401,12 +1244,19 @@ namespace CDRPhotoMatchPro.Imaging
         {
             int count = 0;
 
-            for (int yy = y - 1; yy <= y + 1; yy++)
+            for (int yy = y - 1;
+                 yy <= y + 1;
+                 yy++)
             {
-                for (int xx = x - 1; xx <= x + 1; xx++)
+                for (int xx = x - 1;
+                     xx <= x + 1;
+                     xx++)
                 {
-                    if (xx == x && yy == y)
+                    if (xx == x &&
+                        yy == y)
+                    {
                         continue;
+                    }
 
                     if (mask[xx, yy])
                         count++;
@@ -416,82 +1266,180 @@ namespace CDRPhotoMatchPro.Imaging
             return count;
         }
 
+        private static void CopyMask(
+            bool[,] source,
+            bool[,] destination,
+            int width,
+            int height)
+        {
+            for (int y = 0;
+                 y < height;
+                 y++)
+            {
+                for (int x = 0;
+                     x < width;
+                     x++)
+                {
+                    destination[x, y] =
+                        source[x, y];
+                }
+            }
+        }
+
         private static List<Component> FindComponents(
             bool[,] mask,
             int width,
             int height)
         {
-            var result = new List<Component>();
-            var visited = new bool[width, height];
+            var components =
+                new List<Component>();
 
-            int[] dx = { -1, 0, 1, -1, 1, -1, 0, 1 };
-            int[] dy = { -1, -1, -1, 0, 0, 1, 1, 1 };
+            bool[,] visited =
+                new bool[width, height];
 
-            for (int y = 0; y < height; y++)
+            int[] differenceX =
             {
-                for (int x = 0; x < width; x++)
-                {
-                    if (!mask[x, y] || visited[x, y])
-                        continue;
+                -1, 0, 1,
+                -1, 1,
+                -1, 0, 1
+            };
 
-                    var queue = new Queue<Point>();
-                    queue.Enqueue(new Point(x, y));
+            int[] differenceY =
+            {
+                -1, -1, -1,
+                0, 0,
+                1, 1, 1
+            };
+
+            for (int y = 0;
+                 y < height;
+                 y++)
+            {
+                for (int x = 0;
+                     x < width;
+                     x++)
+                {
+                    if (!mask[x, y] ||
+                        visited[x, y])
+                    {
+                        continue;
+                    }
+
+                    var queue =
+                        new Queue<Point>();
+
+                    queue.Enqueue(
+                        new Point(
+                            x,
+                            y
+                        )
+                    );
+
                     visited[x, y] = true;
 
-                    var component = new Component
-                    {
-                        MinX = x,
-                        MaxX = x,
-                        MinY = y,
-                        MaxY = y,
-                        PixelCount = 0,
-                        TouchesBorder = false
-                    };
+                    var component =
+                        new Component
+                        {
+                            MinX = x,
+                            MinY = y,
+                            MaxX = x,
+                            MaxY = y,
+                            PixelCount = 0,
+                            TouchesBorder = false
+                        };
 
                     while (queue.Count > 0)
                     {
-                        Point point = queue.Dequeue();
+                        Point point =
+                            queue.Dequeue();
 
                         component.PixelCount++;
 
-                        if (point.X < component.MinX) component.MinX = point.X;
-                        if (point.X > component.MaxX) component.MaxX = point.X;
-                        if (point.Y < component.MinY) component.MinY = point.Y;
-                        if (point.Y > component.MaxY) component.MaxY = point.Y;
+                        if (point.X <
+                            component.MinX)
+                        {
+                            component.MinX =
+                                point.X;
+                        }
+
+                        if (point.X >
+                            component.MaxX)
+                        {
+                            component.MaxX =
+                                point.X;
+                        }
+
+                        if (point.Y <
+                            component.MinY)
+                        {
+                            component.MinY =
+                                point.Y;
+                        }
+
+                        if (point.Y >
+                            component.MaxY)
+                        {
+                            component.MaxY =
+                                point.Y;
+                        }
 
                         if (point.X <= 1 ||
                             point.Y <= 1 ||
                             point.X >= width - 2 ||
                             point.Y >= height - 2)
                         {
-                            component.TouchesBorder = true;
+                            component.TouchesBorder =
+                                true;
                         }
 
-                        for (int i = 0; i < 8; i++)
+                        for (int index = 0;
+                             index < 8;
+                             index++)
                         {
-                            int nx = point.X + dx[i];
-                            int ny = point.Y + dy[i];
+                            int nextX =
+                                point.X +
+                                differenceX[index];
 
-                            if (nx < 0 || ny < 0 ||
-                                nx >= width || ny >= height)
+                            int nextY =
+                                point.Y +
+                                differenceY[index];
+
+                            if (nextX < 0 ||
+                                nextY < 0 ||
+                                nextX >= width ||
+                                nextY >= height)
                             {
                                 continue;
                             }
 
-                            if (!mask[nx, ny] || visited[nx, ny])
+                            if (!mask[nextX, nextY] ||
+                                visited[nextX, nextY])
+                            {
                                 continue;
+                            }
 
-                            visited[nx, ny] = true;
-                            queue.Enqueue(new Point(nx, ny));
+                            visited[nextX, nextY] =
+                                true;
+
+                            queue.Enqueue(
+                                new Point(
+                                    nextX,
+                                    nextY
+                                )
+                            );
                         }
                     }
 
-                    if (component.PixelCount >= 18)
-                        result.Add(component);
+                    if (component.PixelCount >= 14)
+                    {
+                        components.Add(
+                            component
+                        );
+                    }
                 }
             }
 
-            return result;
+            return components;
         }
 
         private static Rectangle SelectJewelleryBounds(
@@ -499,68 +1447,149 @@ namespace CDRPhotoMatchPro.Imaging
             int imageWidth,
             int imageHeight)
         {
-            if (components == null || components.Count == 0)
+            if (components == null ||
+                components.Count == 0)
+            {
                 return Rectangle.Empty;
+            }
 
             Component best = null;
-            double bestScore = double.MinValue;
 
-            double imageCenterX = imageWidth / 2.0;
-            double imageCenterY = imageHeight / 2.0;
+            double bestScore =
+                double.MinValue;
 
-            for (int i = 0; i < components.Count; i++)
+            double imageCenterX =
+                imageWidth / 2.0;
+
+            double imageCenterY =
+                imageHeight / 2.0;
+
+            for (int index = 0;
+                 index < components.Count;
+                 index++)
             {
-                Component component = components[i];
+                Component component =
+                    components[index];
 
-                int width = component.Width;
-                int height = component.Height;
-
-                if (width < 4 || height < 4)
+                if (component.Width < 4 ||
+                    component.Height < 4)
+                {
                     continue;
-
-                double aspect =
-                    width / (double)Math.Max(1, height);
+                }
 
                 double boxArea =
-                    width * (double)height;
+                    component.Width *
+                    (double)component.Height;
 
-                double fill =
-                    component.PixelCount /
-                    Math.Max(1.0, boxArea);
+                double imageArea =
+                    imageWidth *
+                    (double)imageHeight;
 
                 double areaRatio =
                     boxArea /
-                    Math.Max(1.0, imageWidth * (double)imageHeight);
+                    Math.Max(
+                        1.0,
+                        imageArea
+                    );
 
-                if (aspect > 8.0 || aspect < 0.08)
-                    continue;
+                double fillRatio =
+                    component.PixelCount /
+                    Math.Max(
+                        1.0,
+                        boxArea
+                    );
 
-                if (areaRatio > 0.70)
-                    continue;
+                double aspectRatio =
+                    component.Width /
+                    (double)Math.Max(
+                        1,
+                        component.Height
+                    );
 
-                if (fill > 0.91 && areaRatio > 0.05)
+                if (areaRatio < 0.00012 ||
+                    areaRatio > 0.62)
+                {
                     continue;
+                }
+
+                if (aspectRatio < 0.06 ||
+                    aspectRatio > 9.0)
+                {
+                    continue;
+                }
+
+                if (fillRatio > 0.94 &&
+                    areaRatio > 0.025)
+                {
+                    continue;
+                }
 
                 double centerX =
-                    component.MinX + width / 2.0;
+                    component.MinX +
+                    component.Width / 2.0;
 
                 double centerY =
-                    component.MinY + height / 2.0;
+                    component.MinY +
+                    component.Height / 2.0;
 
                 double centerDistance =
-                    Math.Abs(centerX - imageCenterX) / imageWidth +
-                    Math.Abs(centerY - imageCenterY) / imageHeight;
+                    Math.Abs(
+                        centerX -
+                        imageCenterX
+                    ) /
+                    Math.Max(
+                        1.0,
+                        imageWidth
+                    ) +
+                    Math.Abs(
+                        centerY -
+                        imageCenterY
+                    ) /
+                    Math.Max(
+                        1.0,
+                        imageHeight
+                    );
+
+                double dimensionScore =
+                    Math.Sqrt(
+                        boxArea
+                    ) * 2.1;
+
+                double pixelScore =
+                    Math.Sqrt(
+                        component.PixelCount
+                    ) * 4.8;
+
+                double fillPreference =
+                    1.0 -
+                    Math.Abs(
+                        fillRatio -
+                        0.34
+                    );
 
                 double score =
-                    Math.Sqrt(component.PixelCount) * 5.0 +
-                    Math.Sqrt(boxArea) * 1.5 -
-                    centerDistance * 90.0;
+                    dimensionScore +
+                    pixelScore +
+                    fillPreference * 55.0 -
+                    centerDistance * 68.0;
 
                 if (component.TouchesBorder)
-                    score -= 65.0;
+                    score -= 90.0;
 
-                if (fill < 0.025)
-                    score -= 40.0;
+                if (fillRatio < 0.012)
+                    score -= 55.0;
+
+                if (component.Width >
+                    imageWidth * 0.88)
+                {
+                    score -= 60.0;
+                }
+
+                if (component.Height >
+                    imageHeight * 0.88)
+                {
+                    score -= 60.0;
+                }
 
                 if (score > bestScore)
                 {
@@ -572,114 +1601,394 @@ namespace CDRPhotoMatchPro.Imaging
             if (best == null)
                 return Rectangle.Empty;
 
-            Rectangle combined = best.Bounds;
+            Rectangle combined =
+                best.Bounds;
 
-            // Best jewellery component ke aas-paas ke top/drop parts bhi include karo.
-            for (int i = 0; i < components.Count; i++)
+            bool changed = true;
+            int passes = 0;
+
+            while (changed &&
+                   passes < 3)
             {
-                Component component = components[i];
+                changed = false;
+                passes++;
 
-                if (component == best)
-                    continue;
+                for (int index = 0;
+                     index < components.Count;
+                     index++)
+                {
+                    Component component =
+                        components[index];
 
-                Rectangle candidate = component.Bounds;
+                    Rectangle candidate =
+                        component.Bounds;
 
-                int horizontalGap =
-                    AxisGap(
-                        combined.Left,
-                        combined.Right,
-                        candidate.Left,
-                        candidate.Right
-                    );
+                    if (combined.Contains(
+                            candidate
+                        ))
+                    {
+                        continue;
+                    }
 
-                int verticalGap =
-                    AxisGap(
-                        combined.Top,
-                        combined.Bottom,
-                        candidate.Top,
-                        candidate.Bottom
-                    );
+                    int horizontalGap =
+                        AxisGap(
+                            combined.Left,
+                            combined.Right,
+                            candidate.Left,
+                            candidate.Right
+                        );
 
-                int horizontalOverlap =
-                    Overlap(
-                        combined.Left,
-                        combined.Right,
-                        candidate.Left,
-                        candidate.Right
-                    );
+                    int verticalGap =
+                        AxisGap(
+                            combined.Top,
+                            combined.Bottom,
+                            candidate.Top,
+                            candidate.Bottom
+                        );
 
-                bool aligned =
-                    horizontalOverlap >=
-                    Math.Min(combined.Width, candidate.Width) / 4;
+                    int horizontalOverlap =
+                        Overlap(
+                            combined.Left,
+                            combined.Right,
+                            candidate.Left,
+                            candidate.Right
+                        );
 
-                bool close =
-                    horizontalGap <= Math.Max(12, combined.Width / 3) &&
-                    verticalGap <= Math.Max(22, combined.Height / 2);
+                    int verticalOverlap =
+                        Overlap(
+                            combined.Top,
+                            combined.Bottom,
+                            candidate.Top,
+                            candidate.Bottom
+                        );
 
-                if (aligned && close)
-                    combined = Rectangle.Union(combined, candidate);
+                    bool verticalAttachment =
+                        horizontalOverlap >=
+                        Math.Min(
+                            combined.Width,
+                            candidate.Width
+                        ) / 5 &&
+                        verticalGap <=
+                        Math.Max(
+                            18,
+                            combined.Height / 3
+                        );
+
+                    bool sideAttachment =
+                        verticalOverlap >=
+                        Math.Min(
+                            combined.Height,
+                            candidate.Height
+                        ) / 4 &&
+                        horizontalGap <=
+                        Math.Max(
+                            18,
+                            combined.Width / 3
+                        );
+
+                    double candidateAreaRatio =
+                        candidate.Width *
+                        (double)candidate.Height /
+                        Math.Max(
+                            1.0,
+                            imageWidth *
+                            (double)imageHeight
+                        );
+
+                    if ((verticalAttachment ||
+                         sideAttachment) &&
+                        candidateAreaRatio < 0.18)
+                    {
+                        combined =
+                            Rectangle.Union(
+                                combined,
+                                candidate
+                            );
+
+                        changed = true;
+                    }
+                }
             }
 
             return combined;
         }
 
-        private static int AxisGap(
-            int a1,
-            int a2,
-            int b1,
-            int b2)
+        private static bool[,] KeepComponentsNearBounds(
+            bool[,] originalMask,
+            List<Component> components,
+            Rectangle selectedBounds,
+            int width,
+            int height)
         {
-            if (a2 < b1)
-                return b1 - a2;
+            bool[,] result =
+                new bool[width, height];
 
-            if (b2 < a1)
-                return a1 - b2;
+            Rectangle expanded =
+                InflateRectangle(
+                    selectedBounds,
+                    Math.Max(
+                        10,
+                        selectedBounds.Width / 5
+                    ),
+                    Math.Max(
+                        10,
+                        selectedBounds.Height / 5
+                    ),
+                    width,
+                    height
+                );
 
-            return 0;
+            for (int y = expanded.Top;
+                 y < expanded.Bottom;
+                 y++)
+            {
+                for (int x = expanded.Left;
+                     x < expanded.Right;
+                     x++)
+                {
+                    result[x, y] =
+                        originalMask[x, y];
+                }
+            }
+
+            return result;
         }
 
-        private static int Overlap(
-            int a1,
-            int a2,
-            int b1,
-            int b2)
-        {
-            return Math.Max(
-                0,
-                Math.Min(a2, b2) -
-                Math.Max(a1, b1)
-            );
-        }
-
-        private static Rectangle AddPadding(
+        private static double ScoreMaskCandidate(
+            bool[,] mask,
             Rectangle bounds,
             int imageWidth,
             int imageHeight)
         {
-            int paddingX =
-                Math.Max(8, bounds.Width / 10);
+            int foregroundPixels = 0;
 
-            int paddingY =
-                Math.Max(8, bounds.Height / 10);
+            for (int y = bounds.Top;
+                 y < bounds.Bottom;
+                 y++)
+            {
+                for (int x = bounds.Left;
+                     x < bounds.Right;
+                     x++)
+                {
+                    if (mask[x, y])
+                        foregroundPixels++;
+                }
+            }
 
-            int left =
-                Math.Max(0, bounds.Left - paddingX);
+            double boxArea =
+                bounds.Width *
+                (double)bounds.Height;
 
-            int top =
-                Math.Max(0, bounds.Top - paddingY);
+            double fillRatio =
+                foregroundPixels /
+                Math.Max(
+                    1.0,
+                    boxArea
+                );
 
-            int right =
-                Math.Min(imageWidth, bounds.Right + paddingX);
+            double areaRatio =
+                boxArea /
+                Math.Max(
+                    1.0,
+                    imageWidth *
+                    (double)imageHeight
+                );
 
-            int bottom =
-                Math.Min(imageHeight, bounds.Bottom + paddingY);
+            double aspectRatio =
+                bounds.Width /
+                (double)Math.Max(
+                    1,
+                    bounds.Height
+                );
+
+            double centerX =
+                bounds.Left +
+                bounds.Width / 2.0;
+
+            double centerY =
+                bounds.Top +
+                bounds.Height / 2.0;
+
+            double centerDistance =
+                Math.Abs(
+                    centerX -
+                    imageWidth / 2.0
+                ) /
+                Math.Max(
+                    1.0,
+                    imageWidth
+                ) +
+                Math.Abs(
+                    centerY -
+                    imageHeight / 2.0
+                ) /
+                Math.Max(
+                    1.0,
+                    imageHeight
+                );
+
+            double fillPreference =
+                1.0 -
+                Math.Min(
+                    1.0,
+                    Math.Abs(
+                        fillRatio -
+                        0.34
+                    ) / 0.34
+                );
+
+            double score =
+                Math.Sqrt(
+                    Math.Max(
+                        1,
+                        foregroundPixels
+                    )
+                ) * 3.2 +
+                Math.Sqrt(
+                    Math.Max(
+                        1.0,
+                        boxArea
+                    )
+                ) * 1.4 +
+                fillPreference * 90.0 -
+                centerDistance * 42.0;
+
+            if (areaRatio < 0.002)
+                score -= 70.0;
+
+            if (areaRatio > 0.58)
+                score -= 90.0;
+
+            if (fillRatio < 0.015)
+                score -= 70.0;
+
+            if (fillRatio > 0.92)
+                score -= 85.0;
+
+            if (aspectRatio < 0.05 ||
+                aspectRatio > 10.0)
+            {
+                score -= 100.0;
+            }
+
+            return score;
+        }
+
+        private static Rectangle FindMaskBounds(
+            bool[,] mask,
+            int width,
+            int height)
+        {
+            int minimumX = width;
+            int minimumY = height;
+            int maximumX = -1;
+            int maximumY = -1;
+
+            for (int y = 0;
+                 y < height;
+                 y++)
+            {
+                for (int x = 0;
+                     x < width;
+                     x++)
+                {
+                    if (!mask[x, y])
+                        continue;
+
+                    if (x < minimumX)
+                        minimumX = x;
+
+                    if (y < minimumY)
+                        minimumY = y;
+
+                    if (x > maximumX)
+                        maximumX = x;
+
+                    if (y > maximumY)
+                        maximumY = y;
+                }
+            }
+
+            if (maximumX < minimumX ||
+                maximumY < minimumY)
+            {
+                return Rectangle.Empty;
+            }
 
             return Rectangle.FromLTRB(
-                left,
-                top,
-                right,
-                bottom
+                minimumX,
+                minimumY,
+                maximumX + 1,
+                maximumY + 1
             );
+        }
+
+        private static void AddSegment(
+            List<ImageSegment> list,
+            Bitmap source,
+            string name,
+            Rectangle bounds,
+            double weight)
+        {
+            Rectangle sourceBounds =
+                new Rectangle(
+                    0,
+                    0,
+                    source.Width,
+                    source.Height
+                );
+
+            bounds.Intersect(
+                sourceBounds
+            );
+
+            if (bounds.Width < 12 ||
+                bounds.Height < 12)
+            {
+                list.Add(
+                    new ImageSegment
+                    {
+                        Name = name,
+                        Bitmap =
+                            CreateBlankBitmap(),
+                        Bounds = bounds,
+                        Weight = weight
+                    }
+                );
+
+                return;
+            }
+
+            Bitmap crop = null;
+
+            try
+            {
+                crop =
+                    source.Clone(
+                        bounds,
+                        PixelFormat.Format24bppRgb
+                    );
+
+                Bitmap normalized =
+                    NormalizeSilhouette(
+                        crop
+                    );
+
+                list.Add(
+                    new ImageSegment
+                    {
+                        Name = name,
+                        Bitmap = normalized,
+                        Bounds = bounds,
+                        Weight = weight
+                    }
+                );
+            }
+            finally
+            {
+                if (crop != null)
+                    crop.Dispose();
+            }
         }
 
         private static Bitmap RenderMaskCrop(
@@ -693,20 +2002,39 @@ namespace CDRPhotoMatchPro.Imaging
                     PixelFormat.Format24bppRgb
                 );
 
-            using (Graphics graphics = Graphics.FromImage(bitmap))
-                graphics.Clear(Color.White);
-
-            for (int y = 0; y < bounds.Height; y++)
+            using (Graphics graphics =
+                Graphics.FromImage(bitmap))
             {
-                for (int x = 0; x < bounds.Width; x++)
+                graphics.Clear(Color.White);
+            }
+
+            for (int y = 0;
+                 y < bounds.Height;
+                 y++)
+            {
+                for (int x = 0;
+                     x < bounds.Width;
+                     x++)
                 {
-                    int sourceX = bounds.Left + x;
-                    int sourceY = bounds.Top + y;
+                    int sourceX =
+                        bounds.Left + x;
+
+                    int sourceY =
+                        bounds.Top + y;
+
+                    bool foreground =
+                        sourceX >= 0 &&
+                        sourceY >= 0 &&
+                        sourceX <
+                            mask.GetLength(0) &&
+                        sourceY <
+                            mask.GetLength(1) &&
+                        mask[sourceX, sourceY];
 
                     bitmap.SetPixel(
                         x,
                         y,
-                        mask[sourceX, sourceY]
+                        foreground
                             ? Color.Black
                             : Color.White
                     );
@@ -716,131 +2044,228 @@ namespace CDRPhotoMatchPro.Imaging
             return bitmap;
         }
 
-        private static Bitmap NormalizeSilhouette(Bitmap source)
+        private static Bitmap NormalizeSilhouette(
+            Bitmap source)
         {
-            Rectangle bounds = FindDarkBounds(source);
+            Rectangle bounds =
+                FindDarkBounds(source);
 
-            if (bounds == Rectangle.Empty)
+            if (bounds ==
+                Rectangle.Empty)
             {
-                Bitmap blank =
+                return CreateBlankBitmap();
+            }
+
+            Bitmap cropped = null;
+
+            try
+            {
+                cropped =
+                    source.Clone(
+                        bounds,
+                        PixelFormat.Format24bppRgb
+                    );
+
+                Bitmap normalized =
                     new Bitmap(
                         NormalizedSize,
                         NormalizedSize,
                         PixelFormat.Format24bppRgb
                     );
 
-                using (Graphics graphics = Graphics.FromImage(blank))
+                using (Graphics graphics =
+                    Graphics.FromImage(normalized))
+                {
                     graphics.Clear(Color.White);
 
-                return blank;
-            }
+                    graphics.InterpolationMode =
+                        InterpolationMode.HighQualityBicubic;
 
-            Bitmap cropped =
-                source.Clone(
-                    bounds,
-                    PixelFormat.Format24bppRgb
-                );
+                    graphics.SmoothingMode =
+                        SmoothingMode.HighQuality;
 
-            Bitmap normalized =
-                new Bitmap(
-                    NormalizedSize,
-                    NormalizedSize,
-                    PixelFormat.Format24bppRgb
-                );
+                    graphics.PixelOffsetMode =
+                        PixelOffsetMode.HighQuality;
 
-            using (Graphics graphics = Graphics.FromImage(normalized))
-            {
-                graphics.Clear(Color.White);
-                graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                graphics.SmoothingMode = SmoothingMode.HighQuality;
-                graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                    int margin = 14;
 
-                int margin = 14;
-                int available = NormalizedSize - margin * 2;
+                    int available =
+                        NormalizedSize -
+                        margin * 2;
 
-                double scale =
-                    Math.Min(
-                        available / (double)cropped.Width,
-                        available / (double)cropped.Height
+                    double scale =
+                        Math.Min(
+                            available /
+                            (double)Math.Max(
+                                1,
+                                cropped.Width
+                            ),
+                            available /
+                            (double)Math.Max(
+                                1,
+                                cropped.Height
+                            )
+                        );
+
+                    int drawWidth =
+                        Math.Max(
+                            1,
+                            (int)Math.Round(
+                                cropped.Width *
+                                scale
+                            )
+                        );
+
+                    int drawHeight =
+                        Math.Max(
+                            1,
+                            (int)Math.Round(
+                                cropped.Height *
+                                scale
+                            )
+                        );
+
+                    int drawX =
+                        (
+                            NormalizedSize -
+                            drawWidth
+                        ) / 2;
+
+                    int drawY =
+                        (
+                            NormalizedSize -
+                            drawHeight
+                        ) / 2;
+
+                    graphics.DrawImage(
+                        cropped,
+                        new Rectangle(
+                            drawX,
+                            drawY,
+                            drawWidth,
+                            drawHeight
+                        ),
+                        0,
+                        0,
+                        cropped.Width,
+                        cropped.Height,
+                        GraphicsUnit.Pixel
                     );
+                }
 
-                int drawWidth =
-                    Math.Max(1, (int)(cropped.Width * scale));
-
-                int drawHeight =
-                    Math.Max(1, (int)(cropped.Height * scale));
-
-                int drawX =
-                    (NormalizedSize - drawWidth) / 2;
-
-                int drawY =
-                    (NormalizedSize - drawHeight) / 2;
-
-                graphics.DrawImage(
-                    cropped,
-                    drawX,
-                    drawY,
-                    drawWidth,
-                    drawHeight
+                MakeStrictBlackWhite(
+                    normalized
                 );
+
+                return normalized;
             }
-
-            cropped.Dispose();
-
-            // Final strict black/white conversion.
-            for (int y = 0; y < normalized.Height; y++)
+            finally
             {
-                for (int x = 0; x < normalized.Width; x++)
-                {
-                    Color c = normalized.GetPixel(x, y);
-                    int gray = Gray(c);
+                if (cropped != null)
+                    cropped.Dispose();
+            }
+        }
 
-                    normalized.SetPixel(
+        private static void MakeStrictBlackWhite(
+            Bitmap bitmap)
+        {
+            int[,] gray =
+                ReadGrayValues(bitmap);
+
+            int threshold =
+                CalculateOtsuThreshold(
+                    gray,
+                    bitmap.Width,
+                    bitmap.Height
+                );
+
+            threshold =
+                ClampInt(
+                    threshold + 22,
+                    95,
+                    222
+                );
+
+            for (int y = 0;
+                 y < bitmap.Height;
+                 y++)
+            {
+                for (int x = 0;
+                     x < bitmap.Width;
+                     x++)
+                {
+                    bitmap.SetPixel(
                         x,
                         y,
-                        gray < 210
+                        gray[x, y] <
+                            threshold
                             ? Color.Black
                             : Color.White
                     );
                 }
             }
-
-            return normalized;
         }
 
-        private static Rectangle FindDarkBounds(Bitmap bitmap)
+        private static Rectangle FindDarkBounds(
+            Bitmap bitmap)
         {
-            int minX = bitmap.Width;
-            int minY = bitmap.Height;
-            int maxX = -1;
-            int maxY = -1;
+            int minimumX =
+                bitmap.Width;
 
-            for (int y = 0; y < bitmap.Height; y++)
+            int minimumY =
+                bitmap.Height;
+
+            int maximumX = -1;
+            int maximumY = -1;
+
+            for (int y = 0;
+                 y < bitmap.Height;
+                 y++)
             {
-                for (int x = 0; x < bitmap.Width; x++)
+                for (int x = 0;
+                     x < bitmap.Width;
+                     x++)
                 {
-                    if (Gray(bitmap.GetPixel(x, y)) >= 220)
+                    if (Gray(
+                            bitmap.GetPixel(
+                                x,
+                                y
+                            )
+                        ) >= 225)
+                    {
                         continue;
+                    }
 
-                    if (x < minX) minX = x;
-                    if (y < minY) minY = y;
-                    if (x > maxX) maxX = x;
-                    if (y > maxY) maxY = y;
+                    if (x < minimumX)
+                        minimumX = x;
+
+                    if (y < minimumY)
+                        minimumY = y;
+
+                    if (x > maximumX)
+                        maximumX = x;
+
+                    if (y > maximumY)
+                        maximumY = y;
                 }
             }
 
-            if (maxX < minX || maxY < minY)
+            if (maximumX < minimumX ||
+                maximumY < minimumY)
+            {
                 return Rectangle.Empty;
+            }
 
             return Rectangle.FromLTRB(
-                minX,
-                minY,
-                maxX + 1,
-                maxY + 1
+                minimumX,
+                minimumY,
+                maximumX + 1,
+                maximumY + 1
             );
         }
 
-        private static Bitmap CreateFallbackSilhouette(Bitmap source)
+        private static Bitmap CreateFallbackSilhouette(
+            Bitmap source)
         {
             Bitmap fallback =
                 new Bitmap(
@@ -849,17 +2274,36 @@ namespace CDRPhotoMatchPro.Imaging
                     PixelFormat.Format24bppRgb
                 );
 
-            for (int y = 0; y < source.Height; y++)
-            {
-                for (int x = 0; x < source.Width; x++)
-                {
-                    int gray =
-                        Gray(source.GetPixel(x, y));
+            int[,] gray =
+                ReadGrayValues(source);
 
+            int threshold =
+                CalculateOtsuThreshold(
+                    gray,
+                    source.Width,
+                    source.Height
+                );
+
+            threshold =
+                ClampInt(
+                    threshold,
+                    75,
+                    190
+                );
+
+            for (int y = 0;
+                 y < source.Height;
+                 y++)
+            {
+                for (int x = 0;
+                     x < source.Width;
+                     x++)
+                {
                     fallback.SetPixel(
                         x,
                         y,
-                        gray < 150
+                        gray[x, y] <
+                            threshold
                             ? Color.Black
                             : Color.White
                     );
@@ -867,7 +2311,9 @@ namespace CDRPhotoMatchPro.Imaging
             }
 
             Bitmap normalized =
-                NormalizeSilhouette(fallback);
+                NormalizeSilhouette(
+                    fallback
+                );
 
             fallback.Dispose();
 
@@ -879,20 +2325,40 @@ namespace CDRPhotoMatchPro.Imaging
             int maxWidth,
             int maxHeight)
         {
-            double ratio =
+            double scale =
                 Math.Min(
-                    maxWidth / (double)Math.Max(1, source.Width),
-                    maxHeight / (double)Math.Max(1, source.Height)
+                    maxWidth /
+                    (double)Math.Max(
+                        1,
+                        source.Width
+                    ),
+                    maxHeight /
+                    (double)Math.Max(
+                        1,
+                        source.Height
+                    )
                 );
 
-            if (ratio > 1.0)
-                ratio = 1.0;
+            if (scale > 1.0)
+                scale = 1.0;
 
             int width =
-                Math.Max(1, (int)(source.Width * ratio));
+                Math.Max(
+                    1,
+                    (int)Math.Round(
+                        source.Width *
+                        scale
+                    )
+                );
 
             int height =
-                Math.Max(1, (int)(source.Height * ratio));
+                Math.Max(
+                    1,
+                    (int)Math.Round(
+                        source.Height *
+                        scale
+                    )
+                );
 
             Bitmap result =
                 new Bitmap(
@@ -901,43 +2367,392 @@ namespace CDRPhotoMatchPro.Imaging
                     PixelFormat.Format24bppRgb
                 );
 
-            using (Graphics graphics = Graphics.FromImage(result))
+            using (Graphics graphics =
+                Graphics.FromImage(result))
             {
                 graphics.Clear(Color.White);
-                graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                graphics.SmoothingMode = SmoothingMode.HighQuality;
-                graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+
+                graphics.InterpolationMode =
+                    InterpolationMode.HighQualityBicubic;
+
+                graphics.SmoothingMode =
+                    SmoothingMode.HighQuality;
+
+                graphics.PixelOffsetMode =
+                    PixelOffsetMode.HighQuality;
 
                 graphics.DrawImage(
                     source,
+                    new Rectangle(
+                        0,
+                        0,
+                        width,
+                        height
+                    ),
                     0,
                     0,
-                    width,
-                    height
+                    source.Width,
+                    source.Height,
+                    GraphicsUnit.Pixel
                 );
             }
 
             return result;
         }
 
-        private static int Gray(Color color)
+        private static Color EstimateBackground(
+            Bitmap bitmap)
         {
-            return (
-                color.R * 30 +
-                color.G * 59 +
-                color.B * 11
-            ) / 100;
+            var samples =
+                new List<Color>();
+
+            int stepX =
+                Math.Max(
+                    1,
+                    bitmap.Width / 32
+                );
+
+            int stepY =
+                Math.Max(
+                    1,
+                    bitmap.Height / 32
+                );
+
+            for (int x = 0;
+                 x < bitmap.Width;
+                 x += stepX)
+            {
+                samples.Add(
+                    bitmap.GetPixel(
+                        x,
+                        0
+                    )
+                );
+
+                samples.Add(
+                    bitmap.GetPixel(
+                        x,
+                        bitmap.Height - 1
+                    )
+                );
+            }
+
+            for (int y = 0;
+                 y < bitmap.Height;
+                 y += stepY)
+            {
+                samples.Add(
+                    bitmap.GetPixel(
+                        0,
+                        y
+                    )
+                );
+
+                samples.Add(
+                    bitmap.GetPixel(
+                        bitmap.Width - 1,
+                        y
+                    )
+                );
+            }
+
+            if (samples.Count == 0)
+                return Color.White;
+
+            int[] redValues =
+                new int[samples.Count];
+
+            int[] greenValues =
+                new int[samples.Count];
+
+            int[] blueValues =
+                new int[samples.Count];
+
+            for (int index = 0;
+                 index < samples.Count;
+                 index++)
+            {
+                redValues[index] =
+                    samples[index].R;
+
+                greenValues[index] =
+                    samples[index].G;
+
+                blueValues[index] =
+                    samples[index].B;
+            }
+
+            Array.Sort(redValues);
+            Array.Sort(greenValues);
+            Array.Sort(blueValues);
+
+            int middle =
+                samples.Count / 2;
+
+            return Color.FromArgb(
+                redValues[middle],
+                greenValues[middle],
+                blueValues[middle]
+            );
         }
 
-        private static int Clamp(int value)
+        private static bool IsLikelySkin(
+            Color color)
         {
-            if (value < 0)
-                return 0;
+            int maximum =
+                Math.Max(
+                    color.R,
+                    Math.Max(
+                        color.G,
+                        color.B
+                    )
+                );
 
-            if (value > 255)
-                return 255;
+            int minimum =
+                Math.Min(
+                    color.R,
+                    Math.Min(
+                        color.G,
+                        color.B
+                    )
+                );
+
+            bool skinOne =
+                color.R > 92 &&
+                color.G > 38 &&
+                color.B > 20 &&
+                maximum - minimum > 15 &&
+                Math.Abs(
+                    color.R -
+                    color.G
+                ) > 15 &&
+                color.R > color.G &&
+                color.R > color.B;
+
+            bool skinTwo =
+                color.R > 145 &&
+                color.G > 75 &&
+                color.B > 45 &&
+                color.R >
+                    color.B + 28;
+
+            return skinOne ||
+                   skinTwo;
+        }
+
+        private static bool IsNearWhite(
+            Color color)
+        {
+            int maximum =
+                Math.Max(
+                    color.R,
+                    Math.Max(
+                        color.G,
+                        color.B
+                    )
+                );
+
+            int minimum =
+                Math.Min(
+                    color.R,
+                    Math.Min(
+                        color.G,
+                        color.B
+                    )
+                );
+
+            return Gray(color) > 242 &&
+                   maximum - minimum < 22;
+        }
+
+        private static bool IsLikelyBlueRuler(
+            Color color)
+        {
+            return color.B > 112 &&
+                   color.B >
+                       color.R + 18 &&
+                   color.B >
+                       color.G + 8;
+        }
+
+        private static Rectangle AddPadding(
+            Rectangle bounds,
+            int imageWidth,
+            int imageHeight)
+        {
+            int paddingX =
+                Math.Max(
+                    8,
+                    bounds.Width / 9
+                );
+
+            int paddingY =
+                Math.Max(
+                    8,
+                    bounds.Height / 9
+                );
+
+            return InflateRectangle(
+                bounds,
+                paddingX,
+                paddingY,
+                imageWidth,
+                imageHeight
+            );
+        }
+
+        private static Rectangle InflateRectangle(
+            Rectangle bounds,
+            int horizontal,
+            int vertical,
+            int imageWidth,
+            int imageHeight)
+        {
+            int left =
+                Math.Max(
+                    0,
+                    bounds.Left -
+                    horizontal
+                );
+
+            int top =
+                Math.Max(
+                    0,
+                    bounds.Top -
+                    vertical
+                );
+
+            int right =
+                Math.Min(
+                    imageWidth,
+                    bounds.Right +
+                    horizontal
+                );
+
+            int bottom =
+                Math.Min(
+                    imageHeight,
+                    bounds.Bottom +
+                    vertical
+                );
+
+            return Rectangle.FromLTRB(
+                left,
+                top,
+                right,
+                bottom
+            );
+        }
+
+        private static int AxisGap(
+            int firstStart,
+            int firstEnd,
+            int secondStart,
+            int secondEnd)
+        {
+            if (firstEnd <
+                secondStart)
+            {
+                return secondStart -
+                       firstEnd;
+            }
+
+            if (secondEnd <
+                firstStart)
+            {
+                return firstStart -
+                       secondEnd;
+            }
+
+            return 0;
+        }
+
+        private static int Overlap(
+            int firstStart,
+            int firstEnd,
+            int secondStart,
+            int secondEnd)
+        {
+            return Math.Max(
+                0,
+                Math.Min(
+                    firstEnd,
+                    secondEnd
+                ) -
+                Math.Max(
+                    firstStart,
+                    secondStart
+                )
+            );
+        }
+
+        private static Bitmap CreateBlankBitmap()
+        {
+            Bitmap blank =
+                new Bitmap(
+                    NormalizedSize,
+                    NormalizedSize,
+                    PixelFormat.Format24bppRgb
+                );
+
+            using (Graphics graphics =
+                Graphics.FromImage(blank))
+            {
+                graphics.Clear(Color.White);
+            }
+
+            return blank;
+        }
+
+        private static int Gray(
+            Color color)
+        {
+            return (
+                color.R * 299 +
+                color.G * 587 +
+                color.B * 114
+            ) / 1000;
+        }
+
+        private static int ClampInt(
+            int value,
+            int minimum,
+            int maximum)
+        {
+            if (value < minimum)
+                return minimum;
+
+            if (value > maximum)
+                return maximum;
 
             return value;
+        }
+
+        private static void DisposeSegments(
+            List<ImageSegment> segments)
+        {
+            if (segments == null)
+                return;
+
+            for (int index = 0;
+                 index < segments.Count;
+                 index++)
+            {
+                try
+                {
+                    ImageSegment segment =
+                        segments[index];
+
+                    if (segment != null &&
+                        segment.Bitmap != null)
+                    {
+                        segment.Bitmap.Dispose();
+                    }
+                }
+                catch
+                {
+                }
+            }
         }
     }
 }
