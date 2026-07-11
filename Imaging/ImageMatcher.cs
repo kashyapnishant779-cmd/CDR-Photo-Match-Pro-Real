@@ -30,10 +30,8 @@ namespace CDRPhotoMatchPro.Imaging
         private const int MaxParts = 6;
 
         /*
-         * Route order:
-         *
-         * 0 = CLEAN LINE-ART ROUTE
-         * 1 = DIRECT ORIGINAL/BLUR ROUTE
+         * Route 0 = extracted clean line-art
+         * Route 1 = extracted cropped original / blur route
          */
 
         private const int CleanRoute = 0;
@@ -58,7 +56,7 @@ namespace CDRPhotoMatchPro.Imaging
          * 88  Symmetry
          * 96  Segment Weight
          *
-         * Total = 104 bytes
+         * Total = 104 bytes per part
          */
 
         private const int PartSize = 104;
@@ -80,14 +78,13 @@ namespace CDRPhotoMatchPro.Imaging
         private const int SymmetryOffset = 88;
         private const int WeightOffset = 96;
 
-        private const int DirectNormalizedSize = 256;
+        private const int PreparedSize = 256;
 
         public static double Compare(
             string queryImagePath,
             string databaseImagePath)
         {
-            ImageMatcher matcher =
-                new ImageMatcher();
+            ImageMatcher matcher = new ImageMatcher();
 
             byte[] query =
                 matcher.ExtractDescriptorBytes(
@@ -127,40 +124,99 @@ namespace CDRPhotoMatchPro.Imaging
                 return descriptor;
             }
 
+            ImagePreprocessResult processed = null;
             List<ImageSegment> cleanSegments = null;
             List<ImageSegment> directSegments = null;
 
             try
             {
-                using (Bitmap bitmap =
+                using (Bitmap original =
                     new Bitmap(imagePath))
                 {
                     /*
-                     * Route A:
-                     * Background removal + clean silhouette.
+                     * Sabse pehle:
+                     *
+                     * background remove
+                     * jewellery detect
+                     * jewellery crop
+                     * silhouette
+                     * line-art
                      */
 
-                    cleanSegments =
-                        ImageSegmenter.Segment(
-                            bitmap
+                    processed =
+                        ImagePreprocessor.Process(
+                            original
                         );
+
+                    /*
+                     * Clean route:
+                     * Extracted line-art ko directly segment karo.
+                     */
+
+                    if (processed != null &&
+                        processed.LineArt != null)
+                    {
+                        cleanSegments =
+                            BuildPreparedSegments(
+                                processed.LineArt,
+                                true
+                            );
+                    }
+
+                    /*
+                     * Direct route:
+                     * Sirf extracted jewellery crop ko use karo.
+                     * Puri original JPG ko nahi.
+                     */
+
+                    if (processed != null &&
+                        processed.CroppedOriginal != null)
+                    {
+                        directSegments =
+                            BuildPreparedSegments(
+                                processed.CroppedOriginal,
+                                false
+                            );
+                    }
+
+                    /*
+                     * Preprocessor weak/fail ho to old route backup.
+                     */
+
+                    if (!HasUsableSegments(
+                            cleanSegments
+                        ))
+                    {
+                        DisposeSegments(
+                            cleanSegments
+                        );
+
+                        cleanSegments =
+                            ImageSegmenter.Segment(
+                                original
+                            );
+                    }
+
+                    if (!HasUsableSegments(
+                            directSegments
+                        ))
+                    {
+                        DisposeSegments(
+                            directSegments
+                        );
+
+                        directSegments =
+                            BuildPreparedSegments(
+                                original,
+                                false
+                            );
+                    }
 
                     WriteRoute(
                         descriptor,
                         CleanRoute,
                         cleanSegments
                     );
-
-                    /*
-                     * Route B:
-                     * Original photo structure.
-                     * Background removal fail/blur ho to ye backup hai.
-                     */
-
-                    directSegments =
-                        BuildDirectSegments(
-                            bitmap
-                        );
 
                     WriteRoute(
                         descriptor,
@@ -182,6 +238,9 @@ namespace CDRPhotoMatchPro.Imaging
                 DisposeSegments(
                     directSegments
                 );
+
+                if (processed != null)
+                    processed.Dispose();
             }
 
             return descriptor;
@@ -197,11 +256,6 @@ namespace CDRPhotoMatchPro.Imaging
                 return 0;
             }
 
-            /*
-             * Clean-to-clean:
-             * Clear photo aur correct background removal me strongest.
-             */
-
             double cleanScore =
                 CompareRoute(
                     query,
@@ -209,11 +263,6 @@ namespace CDRPhotoMatchPro.Imaging
                     CleanRoute,
                     CleanRoute
                 );
-
-            /*
-             * Direct-to-direct:
-             * Blur, shadow aur broken line-art me useful.
-             */
 
             double directScore =
                 CompareRoute(
@@ -224,8 +273,8 @@ namespace CDRPhotoMatchPro.Imaging
                 );
 
             /*
-             * Query direct ko candidate clean se compare karna important hai,
-             * kyunki CDR candidate ka clean silhouette accurate hota hai.
+             * Customer crop/direct structure ko CDR clean line-art
+             * se compare karna useful hai.
              */
 
             double directToCleanScore =
@@ -235,10 +284,6 @@ namespace CDRPhotoMatchPro.Imaging
                     DirectRoute,
                     CleanRoute
                 );
-
-            /*
-             * Query clean ko candidate direct se cross-check.
-             */
 
             double cleanToDirectScore =
                 CompareRoute(
@@ -267,93 +312,72 @@ namespace CDRPhotoMatchPro.Imaging
                 );
 
             /*
-             * Ek route strong aur doosra weak ho sakta hai.
-             * Isliye simple average nahi karna.
+             * Clean route sabse important.
+             * Direct route blur fallback.
              */
 
             double finalScore =
-                bestMainScore * 0.62 +
-                bestCrossScore * 0.25 +
-                secondMainScore * 0.13;
+                cleanScore * 0.43 +
+                bestMainScore * 0.27 +
+                bestCrossScore * 0.20 +
+                secondMainScore * 0.10;
+
+            int strongRoutes = 0;
+
+            if (cleanScore >= 74)
+                strongRoutes++;
+
+            if (directScore >= 72)
+                strongRoutes++;
+
+            if (directToCleanScore >= 70)
+                strongRoutes++;
+
+            if (cleanToDirectScore >= 70)
+                strongRoutes++;
 
             /*
-             * Dono main routes agree karein to confidence boost.
+             * Multiple routes agree karein to boost.
              */
 
-            double routeDifference =
-                Math.Abs(
-                    cleanScore -
-                    directScore
-                );
-
             if (cleanScore >= 72 &&
-                directScore >= 68 &&
                 bestCrossScore >= 66)
             {
-                finalScore += 3.0;
+                finalScore += 2.5;
             }
 
             if (cleanScore >= 82 &&
-                directScore >= 76 &&
+                directScore >= 72 &&
                 bestCrossScore >= 74)
             {
-                finalScore += 3.0;
+                finalScore += 3.5;
             }
 
             /*
-             * Sirf ek route accidentally high ho to control.
+             * Sirf ek route accidentally high ho to penalty.
              */
 
-            if (bestMainScore >= 82 &&
-                secondMainScore < 42 &&
-                bestCrossScore < 48)
+            if (bestMainScore >= 78 &&
+                secondMainScore < 38 &&
+                bestCrossScore < 46)
             {
-                finalScore *= 0.78;
+                finalScore *= 0.77;
             }
-            else if (bestMainScore >= 74 &&
-                     secondMainScore < 36 &&
-                     bestCrossScore < 44)
+            else if (bestMainScore >= 68 &&
+                     secondMainScore < 32 &&
+                     bestCrossScore < 42)
             {
                 finalScore *= 0.84;
             }
 
             /*
-             * Clean/direct me bahut disagreement ho to exact match evidence kam.
+             * 90%+ sirf strong multi-route evidence par.
              */
-
-            if (routeDifference > 46 &&
-                bestCrossScore < 52)
-            {
-                finalScore *= 0.82;
-            }
-            else if (routeDifference > 34 &&
-                     bestCrossScore < 58)
-            {
-                finalScore *= 0.90;
-            }
-
-            /*
-             * 90%+ sirf multiple routes ke evidence par.
-             */
-
-            int strongRoutes = 0;
-
-            if (cleanScore >= 76)
-                strongRoutes++;
-
-            if (directScore >= 76)
-                strongRoutes++;
-
-            if (directToCleanScore >= 74)
-                strongRoutes++;
-
-            if (cleanToDirectScore >= 74)
-                strongRoutes++;
 
             if (strongRoutes < 2 &&
-                finalScore > 79)
+                finalScore > 78)
             {
-                finalScore = 79;
+                finalScore = 78;
             }
 
             if (strongRoutes < 3 &&
@@ -368,15 +392,12 @@ namespace CDRPhotoMatchPro.Imaging
                 finalScore = 94;
             }
 
-            finalScore =
+            return Math.Round(
                 Clamp(
                     finalScore,
                     0,
                     100
-                );
-
-            return Math.Round(
-                finalScore,
+                ),
                 2
             );
         }
@@ -447,13 +468,13 @@ namespace CDRPhotoMatchPro.Imaging
                     LeftPart
                 );
 
-            double normalSide =
+            double normalSideScore =
                 (
                     normalLeft +
                     normalRight
                 ) / 2.0;
 
-            double mirrorSide =
+            double mirrorSideScore =
                 (
                     mirrorLeft +
                     mirrorRight
@@ -461,8 +482,8 @@ namespace CDRPhotoMatchPro.Imaging
 
             double sideScore =
                 Math.Max(
-                    normalSide,
-                    mirrorSide
+                    normalSideScore,
+                    mirrorSideScore
                 );
 
             double topScore =
@@ -492,10 +513,10 @@ namespace CDRPhotoMatchPro.Imaging
                 ) / 2.0;
 
             double finalScore =
-                fullScore * 0.36 +
-                centerScore * 0.28 +
-                sideScore * 0.20 +
-                verticalScore * 0.16;
+                fullScore * 0.38 +
+                centerScore * 0.29 +
+                sideScore * 0.18 +
+                verticalScore * 0.15;
 
             int strongParts = 0;
             int mediumParts = 0;
@@ -515,8 +536,8 @@ namespace CDRPhotoMatchPro.Imaging
                 ref weakParts
             );
 
-            if (mirrorSide >
-                normalSide + 3.0)
+            if (mirrorSideScore >
+                normalSideScore + 3)
             {
                 CountPart(
                     mirrorLeft,
@@ -564,72 +585,72 @@ namespace CDRPhotoMatchPro.Imaging
             );
 
             /*
-             * Full silhouette weak ho to random shapes control.
+             * Main silhouette weak ho to random ornamental design reject.
              */
 
-            if (fullScore < 32)
+            if (fullScore < 30)
             {
-                finalScore *= 0.56;
+                finalScore *= 0.52;
             }
-            else if (fullScore < 43)
+            else if (fullScore < 41)
             {
-                finalScore *= 0.72;
+                finalScore *= 0.69;
             }
-            else if (fullScore < 54)
+            else if (fullScore < 53)
             {
-                finalScore *= 0.87;
+                finalScore *= 0.85;
             }
 
             /*
-             * Center jewellery identity ka strong part hai.
+             * Center design identity.
              */
 
-            if (centerScore < 31)
+            if (centerScore < 29)
             {
-                finalScore *= 0.58;
+                finalScore *= 0.54;
             }
-            else if (centerScore < 42)
+            else if (centerScore < 40)
             {
-                finalScore *= 0.74;
+                finalScore *= 0.70;
             }
-            else if (centerScore < 53)
+            else if (centerScore < 52)
             {
-                finalScore *= 0.88;
+                finalScore *= 0.86;
             }
 
             /*
-             * Sirf ek-do parts similar hon to high score nahi.
+             * Sirf ek-do matching parts se high score nahi.
              */
 
             if (strongParts == 0)
             {
-                finalScore *= 0.60;
+                finalScore *= 0.56;
             }
             else if (strongParts == 1)
             {
-                finalScore *= 0.75;
+                finalScore *= 0.72;
             }
             else if (strongParts == 2)
             {
-                finalScore *= 0.89;
+                finalScore *= 0.87;
             }
 
             if (mediumParts <= 1)
             {
-                finalScore *= 0.70;
+                finalScore *= 0.66;
             }
             else if (mediumParts == 2)
             {
-                finalScore *= 0.84;
+                finalScore *= 0.82;
             }
 
             if (weakParts >= 4)
             {
-                finalScore *= 0.74;
+                finalScore *= 0.70;
             }
             else if (weakParts == 3)
             {
-                finalScore *= 0.86;
+                finalScore *= 0.84;
             }
 
             double maximum =
@@ -654,40 +675,36 @@ namespace CDRPhotoMatchPro.Imaging
 
             if (spread > 48)
             {
-                finalScore *= 0.75;
+                finalScore *= 0.72;
             }
             else if (spread > 36)
             {
-                finalScore *= 0.85;
+                finalScore *= 0.83;
             }
             else if (spread > 27)
             {
-                finalScore *= 0.93;
+                finalScore *= 0.92;
             }
 
-            if (sideScore < 27)
+            if (sideScore < 25)
             {
-                finalScore *= 0.76;
+                finalScore *= 0.73;
             }
-            else if (sideScore < 39)
+            else if (sideScore < 38)
             {
-                finalScore *= 0.89;
+                finalScore *= 0.87;
             }
-
-            /*
-             * Route-level conservative caps.
-             */
 
             if (strongParts < 3 &&
-                finalScore > 78)
+                finalScore > 76)
             {
-                finalScore = 78;
+                finalScore = 76;
             }
 
             if (strongParts < 4 &&
-                finalScore > 86)
+                finalScore > 85)
             {
-                finalScore = 86;
+                finalScore = 85;
             }
 
             if (strongParts < 5 &&
@@ -696,22 +713,22 @@ namespace CDRPhotoMatchPro.Imaging
                 finalScore = 92;
             }
 
-            if (fullScore >= 82 &&
-                centerScore >= 80 &&
+            if (fullScore >= 83 &&
+                centerScore >= 81 &&
                 sideScore >= 70 &&
                 verticalScore >= 66 &&
                 strongParts >= 4)
             {
-                finalScore += 3.0;
+                finalScore += 3;
             }
 
-            if (fullScore >= 89 &&
-                centerScore >= 86 &&
-                sideScore >= 78 &&
+            if (fullScore >= 90 &&
+                centerScore >= 87 &&
+                sideScore >= 79 &&
                 verticalScore >= 74 &&
                 strongParts >= 5)
             {
-                finalScore += 3.0;
+                finalScore += 3;
             }
 
             return Clamp(
@@ -791,25 +808,6 @@ namespace CDRPhotoMatchPro.Imaging
                     second
                 );
 
-            double weightDifference =
-                NormalizedDifference(
-                    queryWeight,
-                    candidateWeight
-                );
-
-            if (weightDifference > 0.60)
-            {
-                score *= 0.78;
-            }
-            else if (weightDifference > 0.42)
-            {
-                score *= 0.87;
-            }
-            else if (weightDifference > 0.26)
-            {
-                score *= 0.94;
-            }
-
             double aspectDifference =
                 NormalizedDifference(
                     first.AspectRatio,
@@ -850,11 +848,11 @@ namespace CDRPhotoMatchPro.Imaging
 
             if (aspectDifference > 0.50)
             {
-                score *= 0.68;
+                score *= 0.66;
             }
             else if (aspectDifference > 0.35)
             {
-                score *= 0.80;
+                score *= 0.79;
             }
             else if (aspectDifference > 0.23)
             {
@@ -863,11 +861,11 @@ namespace CDRPhotoMatchPro.Imaging
 
             if (darkDifference > 0.30)
             {
-                score *= 0.72;
+                score *= 0.70;
             }
             else if (darkDifference > 0.20)
             {
-                score *= 0.84;
+                score *= 0.83;
             }
             else if (darkDifference > 0.13)
             {
@@ -876,11 +874,11 @@ namespace CDRPhotoMatchPro.Imaging
 
             if (edgeDifference > 0.23)
             {
-                score *= 0.72;
+                score *= 0.70;
             }
             else if (edgeDifference > 0.15)
             {
-                score *= 0.85;
+                score *= 0.84;
             }
             else if (edgeDifference > 0.10)
             {
@@ -889,29 +887,29 @@ namespace CDRPhotoMatchPro.Imaging
 
             if (borderDifference > 0.38)
             {
-                score *= 0.80;
+                score *= 0.78;
             }
             else if (borderDifference > 0.25)
             {
-                score *= 0.90;
+                score *= 0.89;
             }
 
             if (symmetryDifference > 0.44)
             {
-                score *= 0.86;
+                score *= 0.84;
             }
             else if (symmetryDifference > 0.30)
             {
-                score *= 0.94;
+                score *= 0.93;
             }
 
             if (centerDistance > 0.36)
             {
-                score *= 0.80;
+                score *= 0.78;
             }
             else if (centerDistance > 0.24)
             {
-                score *= 0.90;
+                score *= 0.89;
             }
 
             return Clamp(
@@ -919,6 +917,346 @@ namespace CDRPhotoMatchPro.Imaging
                 0,
                 100
             );
+        }
+
+        private static List<ImageSegment> BuildPreparedSegments(
+            Bitmap source,
+            bool strictLineArt)
+        {
+            var segments =
+                new List<ImageSegment>();
+
+            if (source == null ||
+                source.Width <= 0 ||
+                source.Height <= 0)
+            {
+                return segments;
+            }
+
+            Bitmap normalized = null;
+
+            try
+            {
+                normalized =
+                    NormalizePreparedImage(
+                        source,
+                        strictLineArt
+                    );
+
+                int width = normalized.Width;
+                int height = normalized.Height;
+
+                AddPreparedSegment(
+                    segments,
+                    normalized,
+                    "FULL",
+                    new Rectangle(
+                        0,
+                        0,
+                        width,
+                        height
+                    ),
+                    1.00
+                );
+
+                AddPreparedSegment(
+                    segments,
+                    normalized,
+                    "CENTER",
+                    new Rectangle(
+                        width * 17 / 100,
+                        height * 17 / 100,
+                        width * 66 / 100,
+                        height * 66 / 100
+                    ),
+                    0.95
+                );
+
+                AddPreparedSegment(
+                    segments,
+                    normalized,
+                    "LEFT",
+                    new Rectangle(
+                        0,
+                        height * 8 / 100,
+                        width * 58 / 100,
+                        height * 84 / 100
+                    ),
+                    0.68
+                );
+
+                AddPreparedSegment(
+                    segments,
+                    normalized,
+                    "RIGHT",
+                    new Rectangle(
+                        width * 42 / 100,
+                        height * 8 / 100,
+                        width * 58 / 100,
+                        height * 84 / 100
+                    ),
+                    0.68
+                );
+
+                AddPreparedSegment(
+                    segments,
+                    normalized,
+                    "TOP",
+                    new Rectangle(
+                        width * 6 / 100,
+                        0,
+                        width * 88 / 100,
+                        height * 48 / 100
+                    ),
+                    0.74
+                );
+
+                AddPreparedSegment(
+                    segments,
+                    normalized,
+                    "BOTTOM",
+                    new Rectangle(
+                        width * 6 / 100,
+                        height * 52 / 100,
+                        width * 88 / 100,
+                        height * 48 / 100
+                    ),
+                    0.78
+                );
+            }
+            catch
+            {
+                DisposeSegments(
+                    segments
+                );
+
+                segments.Clear();
+            }
+            finally
+            {
+                if (normalized != null)
+                    normalized.Dispose();
+            }
+
+            return segments;
+        }
+
+        private static Bitmap NormalizePreparedImage(
+            Bitmap source,
+            bool strictLineArt)
+        {
+            Bitmap result =
+                new Bitmap(
+                    PreparedSize,
+                    PreparedSize,
+                    PixelFormat.Format24bppRgb
+                );
+
+            using (Graphics graphics =
+                Graphics.FromImage(result))
+            {
+                graphics.Clear(Color.White);
+
+                graphics.InterpolationMode =
+                    InterpolationMode.HighQualityBicubic;
+
+                graphics.SmoothingMode =
+                    SmoothingMode.HighQuality;
+
+                graphics.PixelOffsetMode =
+                    PixelOffsetMode.HighQuality;
+
+                int margin = 10;
+                int available =
+                    PreparedSize -
+                    margin * 2;
+
+                double scale =
+                    Math.Min(
+                        available /
+                        (double)Math.Max(
+                            1,
+                            source.Width
+                        ),
+                        available /
+                        (double)Math.Max(
+                            1,
+                            source.Height
+                        )
+                    );
+
+                int drawWidth =
+                    Math.Max(
+                        1,
+                        (int)Math.Round(
+                            source.Width *
+                            scale
+                        )
+                    );
+
+                int drawHeight =
+                    Math.Max(
+                        1,
+                        (int)Math.Round(
+                            source.Height *
+                            scale
+                        )
+                    );
+
+                int drawX =
+                    (
+                        PreparedSize -
+                        drawWidth
+                    ) / 2;
+
+                int drawY =
+                    (
+                        PreparedSize -
+                        drawHeight
+                    ) / 2;
+
+                graphics.DrawImage(
+                    source,
+                    new Rectangle(
+                        drawX,
+                        drawY,
+                        drawWidth,
+                        drawHeight
+                    ),
+                    0,
+                    0,
+                    source.Width,
+                    source.Height,
+                    GraphicsUnit.Pixel
+                );
+            }
+
+            if (strictLineArt)
+                MakeStrictBlackWhite(result);
+
+            return result;
+        }
+
+        private static void MakeStrictBlackWhite(
+            Bitmap bitmap)
+        {
+            long total = 0;
+
+            for (int y = 0;
+                 y < bitmap.Height;
+                 y++)
+            {
+                for (int x = 0;
+                     x < bitmap.Width;
+                     x++)
+                {
+                    total += Gray(
+                        bitmap.GetPixel(
+                            x,
+                            y
+                        )
+                    );
+                }
+            }
+
+            double average =
+                total /
+                (double)Math.Max(
+                    1,
+                    bitmap.Width *
+                    bitmap.Height
+                );
+
+            int threshold =
+                ClampInt(
+                    (int)(average - 18),
+                    90,
+                    225
+                );
+
+            for (int y = 0;
+                 y < bitmap.Height;
+                 y++)
+            {
+                for (int x = 0;
+                     x < bitmap.Width;
+                     x++)
+                {
+                    int gray =
+                        Gray(
+                            bitmap.GetPixel(
+                                x,
+                                y
+                            )
+                        );
+
+                    bitmap.SetPixel(
+                        x,
+                        y,
+                        gray < threshold
+                            ? Color.Black
+                            : Color.White
+                    );
+                }
+            }
+        }
+
+        private static void AddPreparedSegment(
+            List<ImageSegment> segments,
+            Bitmap source,
+            string name,
+            Rectangle bounds,
+            double weight)
+        {
+            Rectangle imageBounds =
+                new Rectangle(
+                    0,
+                    0,
+                    source.Width,
+                    source.Height
+                );
+
+            bounds.Intersect(imageBounds);
+
+            if (bounds.Width < 10 ||
+                bounds.Height < 10)
+            {
+                return;
+            }
+
+            Bitmap crop =
+                source.Clone(
+                    bounds,
+                    PixelFormat.Format24bppRgb
+                );
+
+            segments.Add(
+                new ImageSegment
+                {
+                    Name = name,
+                    Bitmap = crop,
+                    Bounds = bounds,
+                    Weight = weight
+                }
+            );
+        }
+
+        private static bool HasUsableSegments(
+            List<ImageSegment> segments)
+        {
+            if (segments == null ||
+                segments.Count < MaxParts)
+            {
+                return false;
+            }
+
+            if (segments[FullPart] == null ||
+                segments[FullPart].Bitmap == null)
+            {
+                return false;
+            }
+
+            return true;
         }
 
         private static void WriteRoute(
@@ -967,360 +1305,6 @@ namespace CDRPhotoMatchPro.Imaging
                     segment.Weight
                 );
             }
-        }
-
-        private static List<ImageSegment> BuildDirectSegments(
-            Bitmap source)
-        {
-            var segments =
-                new List<ImageSegment>();
-
-            if (source == null ||
-                source.Width <= 0 ||
-                source.Height <= 0)
-            {
-                return segments;
-            }
-
-            Bitmap normalized = null;
-
-            try
-            {
-                normalized =
-                    NormalizeDirectImage(
-                        source
-                    );
-
-                int width =
-                    normalized.Width;
-
-                int height =
-                    normalized.Height;
-
-                AddDirectSegment(
-                    segments,
-                    normalized,
-                    "FULL",
-                    new Rectangle(
-                        0,
-                        0,
-                        width,
-                        height
-                    ),
-                    1.00
-                );
-
-                AddDirectSegment(
-                    segments,
-                    normalized,
-                    "CENTER",
-                    new Rectangle(
-                        width * 17 / 100,
-                        height * 17 / 100,
-                        width * 66 / 100,
-                        height * 66 / 100
-                    ),
-                    0.95
-                );
-
-                AddDirectSegment(
-                    segments,
-                    normalized,
-                    "LEFT",
-                    new Rectangle(
-                        0,
-                        height * 8 / 100,
-                        width * 58 / 100,
-                        height * 84 / 100
-                    ),
-                    0.68
-                );
-
-                AddDirectSegment(
-                    segments,
-                    normalized,
-                    "RIGHT",
-                    new Rectangle(
-                        width * 42 / 100,
-                        height * 8 / 100,
-                        width * 58 / 100,
-                        height * 84 / 100
-                    ),
-                    0.68
-                );
-
-                AddDirectSegment(
-                    segments,
-                    normalized,
-                    "TOP",
-                    new Rectangle(
-                        width * 6 / 100,
-                        0,
-                        width * 88 / 100,
-                        height * 48 / 100
-                    ),
-                    0.74
-                );
-
-                AddDirectSegment(
-                    segments,
-                    normalized,
-                    "BOTTOM",
-                    new Rectangle(
-                        width * 6 / 100,
-                        height * 52 / 100,
-                        width * 88 / 100,
-                        height * 48 / 100
-                    ),
-                    0.78
-                );
-            }
-            catch
-            {
-                DisposeSegments(
-                    segments
-                );
-
-                segments.Clear();
-            }
-            finally
-            {
-                if (normalized != null)
-                    normalized.Dispose();
-            }
-
-            return segments;
-        }
-
-        private static Bitmap NormalizeDirectImage(
-            Bitmap source)
-        {
-            Bitmap result =
-                new Bitmap(
-                    DirectNormalizedSize,
-                    DirectNormalizedSize,
-                    PixelFormat.Format24bppRgb
-                );
-
-            using (Graphics graphics =
-                Graphics.FromImage(result))
-            {
-                graphics.Clear(Color.White);
-
-                graphics.InterpolationMode =
-                    InterpolationMode.HighQualityBicubic;
-
-                graphics.SmoothingMode =
-                    SmoothingMode.HighQuality;
-
-                graphics.PixelOffsetMode =
-                    PixelOffsetMode.HighQuality;
-
-                int margin = 10;
-                int available =
-                    DirectNormalizedSize -
-                    margin * 2;
-
-                double scale =
-                    Math.Min(
-                        available /
-                        (double)Math.Max(
-                            1,
-                            source.Width
-                        ),
-                        available /
-                        (double)Math.Max(
-                            1,
-                            source.Height
-                        )
-                    );
-
-                int drawWidth =
-                    Math.Max(
-                        1,
-                        (int)Math.Round(
-                            source.Width *
-                            scale
-                        )
-                    );
-
-                int drawHeight =
-                    Math.Max(
-                        1,
-                        (int)Math.Round(
-                            source.Height *
-                            scale
-                        )
-                    );
-
-                int drawX =
-                    (
-                        DirectNormalizedSize -
-                        drawWidth
-                    ) / 2;
-
-                int drawY =
-                    (
-                        DirectNormalizedSize -
-                        drawHeight
-                    ) / 2;
-
-                graphics.DrawImage(
-                    source,
-                    new Rectangle(
-                        drawX,
-                        drawY,
-                        drawWidth,
-                        drawHeight
-                    ),
-                    0,
-                    0,
-                    source.Width,
-                    source.Height,
-                    GraphicsUnit.Pixel
-                );
-            }
-
-            /*
-             * Blur ko halka smooth karke local noise kam karna.
-             * Strong threshold nahi lagana, kyunki ye direct route hai.
-             */
-
-            return ApplyLightSmoothing(
-                result
-            );
-        }
-
-        private static Bitmap ApplyLightSmoothing(
-            Bitmap source)
-        {
-            Bitmap result =
-                new Bitmap(
-                    source.Width,
-                    source.Height,
-                    PixelFormat.Format24bppRgb
-                );
-
-            for (int y = 0;
-                 y < source.Height;
-                 y++)
-            {
-                for (int x = 0;
-                     x < source.Width;
-                     x++)
-                {
-                    int red = 0;
-                    int green = 0;
-                    int blue = 0;
-                    int count = 0;
-
-                    for (int offsetY = -1;
-                         offsetY <= 1;
-                         offsetY++)
-                    {
-                        int sampleY =
-                            y + offsetY;
-
-                        if (sampleY < 0 ||
-                            sampleY >= source.Height)
-                        {
-                            continue;
-                        }
-
-                        for (int offsetX = -1;
-                             offsetX <= 1;
-                             offsetX++)
-                        {
-                            int sampleX =
-                                x + offsetX;
-
-                            if (sampleX < 0 ||
-                                sampleX >= source.Width)
-                            {
-                                continue;
-                            }
-
-                            Color color =
-                                source.GetPixel(
-                                    sampleX,
-                                    sampleY
-                                );
-
-                            red += color.R;
-                            green += color.G;
-                            blue += color.B;
-                            count++;
-                        }
-                    }
-
-                    if (count <= 0)
-                    {
-                        result.SetPixel(
-                            x,
-                            y,
-                            source.GetPixel(x, y)
-                        );
-                    }
-                    else
-                    {
-                        result.SetPixel(
-                            x,
-                            y,
-                            Color.FromArgb(
-                                red / count,
-                                green / count,
-                                blue / count
-                            )
-                        );
-                    }
-                }
-            }
-
-            source.Dispose();
-
-            return result;
-        }
-
-        private static void AddDirectSegment(
-            List<ImageSegment> segments,
-            Bitmap source,
-            string name,
-            Rectangle bounds,
-            double weight)
-        {
-            Rectangle imageBounds =
-                new Rectangle(
-                    0,
-                    0,
-                    source.Width,
-                    source.Height
-                );
-
-            bounds.Intersect(
-                imageBounds
-            );
-
-            if (bounds.Width < 10 ||
-                bounds.Height < 10)
-            {
-                return;
-            }
-
-            Bitmap crop =
-                source.Clone(
-                    bounds,
-                    PixelFormat.Format24bppRgb
-                );
-
-            segments.Add(
-                new ImageSegment
-                {
-                    Name = name,
-                    Bitmap = crop,
-                    Bounds = bounds,
-                    Weight = weight
-                }
-            );
         }
 
         private static ImageFingerprint ReadFingerprint(
@@ -1435,9 +1419,7 @@ namespace CDRPhotoMatchPro.Imaging
             ImageFingerprint fingerprint,
             double weight)
         {
-            if (descriptor == null ||
-                fingerprint == null ||
-                !CanReadPart(
+            if (!CanReadPart(
                     descriptor,
                     route,
                     part
@@ -1565,13 +1547,8 @@ namespace CDRPhotoMatchPro.Imaging
                 ) +
                 relativeOffset;
 
-            byte[] bytes =
-                BitConverter.GetBytes(
-                    value
-                );
-
             Array.Copy(
-                bytes,
+                BitConverter.GetBytes(value),
                 0,
                 descriptor,
                 offset,
@@ -1593,13 +1570,8 @@ namespace CDRPhotoMatchPro.Imaging
                 ) +
                 relativeOffset;
 
-            byte[] bytes =
-                BitConverter.GetBytes(
-                    value
-                );
-
             Array.Copy(
-                bytes,
+                BitConverter.GetBytes(value),
                 0,
                 descriptor,
                 offset,
@@ -1613,16 +1585,13 @@ namespace CDRPhotoMatchPro.Imaging
             int part,
             int relativeOffset)
         {
-            int offset =
+            return BitConverter.ToUInt64(
+                descriptor,
                 GetPartOffset(
                     route,
                     part
                 ) +
-                relativeOffset;
-
-            return BitConverter.ToUInt64(
-                descriptor,
-                offset
+                relativeOffset
             );
         }
 
@@ -1632,16 +1601,13 @@ namespace CDRPhotoMatchPro.Imaging
             int part,
             int relativeOffset)
         {
-            int offset =
+            return BitConverter.ToDouble(
+                descriptor,
                 GetPartOffset(
                     route,
                     part
                 ) +
-                relativeOffset;
-
-            return BitConverter.ToDouble(
-                descriptor,
-                offset
+                relativeOffset
             );
         }
 
@@ -1673,12 +1639,9 @@ namespace CDRPhotoMatchPro.Imaging
                     part
                 );
 
-            int end =
-                start +
-                PartSize;
-
             return start >= 0 &&
-                   end <= descriptor.Length;
+                   start + PartSize <=
+                   descriptor.Length;
         }
 
         private static bool IsValidDescriptor(
@@ -1690,20 +1653,14 @@ namespace CDRPhotoMatchPro.Imaging
                 return false;
             }
 
-            bool cleanValid =
-                IsRouteValid(
-                    descriptor,
-                    CleanRoute
-                );
-
-            bool directValid =
-                IsRouteValid(
-                    descriptor,
-                    DirectRoute
-                );
-
-            return cleanValid ||
-                   directValid;
+            return IsRouteValid(
+                       descriptor,
+                       CleanRoute
+                   ) ||
+                   IsRouteValid(
+                       descriptor,
+                       DirectRoute
+                   );
         }
 
         private static bool IsRouteValid(
@@ -1719,7 +1676,7 @@ namespace CDRPhotoMatchPro.Imaging
                 return false;
             }
 
-            double fullWeight =
+            double weight =
                 ReadDouble(
                     descriptor,
                     route,
@@ -1727,22 +1684,19 @@ namespace CDRPhotoMatchPro.Imaging
                     WeightOffset
                 );
 
-            if (fullWeight <= 0 ||
-                double.IsNaN(fullWeight) ||
-                double.IsInfinity(fullWeight))
+            if (weight <= 0 ||
+                double.IsNaN(weight) ||
+                double.IsInfinity(weight))
             {
                 return false;
             }
 
-            ImageFingerprint fingerprint =
+            return IsFingerprintValid(
                 ReadFingerprint(
                     descriptor,
                     route,
                     FullPart
-                );
-
-            return IsFingerprintValid(
-                fingerprint
+                )
             );
         }
 
@@ -1759,21 +1713,14 @@ namespace CDRPhotoMatchPro.Imaging
                 fingerprint.VerticalHash != 0 ||
                 fingerprint.RadialHash != 0;
 
-            if (!hasSignature)
-                return false;
-
-            if (double.IsNaN(
-                    fingerprint.AspectRatio
-                ) ||
-                double.IsInfinity(
-                    fingerprint.AspectRatio
-                ) ||
-                fingerprint.AspectRatio <= 0)
-            {
-                return false;
-            }
-
-            return true;
+            return hasSignature &&
+                   !double.IsNaN(
+                       fingerprint.AspectRatio
+                   ) &&
+                   !double.IsInfinity(
+                       fingerprint.AspectRatio
+                   ) &&
+                   fingerprint.AspectRatio > 0;
         }
 
         public Size ReadSize(
@@ -1784,10 +1731,7 @@ namespace CDRPhotoMatchPro.Imaging
                 if (string.IsNullOrEmpty(imagePath) ||
                     !File.Exists(imagePath))
                 {
-                    return new Size(
-                        0,
-                        0
-                    );
+                    return new Size(0, 0);
                 }
 
                 using (Bitmap bitmap =
@@ -1801,10 +1745,7 @@ namespace CDRPhotoMatchPro.Imaging
             }
             catch
             {
-                return new Size(
-                    0,
-                    0
-                );
+                return new Size(0, 0);
             }
         }
 
@@ -1845,13 +1786,10 @@ namespace CDRPhotoMatchPro.Imaging
             {
                 try
                 {
-                    ImageSegment segment =
-                        segments[index];
-
-                    if (segment != null &&
-                        segment.Bitmap != null)
+                    if (segments[index] != null &&
+                        segments[index].Bitmap != null)
                     {
-                        segment.Bitmap.Dispose();
+                        segments[index].Bitmap.Dispose();
                     }
                 }
                 catch
@@ -1917,14 +1855,8 @@ namespace CDRPhotoMatchPro.Imaging
             double fourth)
         {
             return Math.Max(
-                Math.Max(
-                    first,
-                    second
-                ),
-                Math.Max(
-                    third,
-                    fourth
-                )
+                Math.Max(first, second),
+                Math.Max(third, fourth)
             );
         }
 
@@ -1935,15 +1867,33 @@ namespace CDRPhotoMatchPro.Imaging
             double fourth)
         {
             return Math.Min(
-                Math.Min(
-                    first,
-                    second
-                ),
-                Math.Min(
-                    third,
-                    fourth
-                )
+                Math.Min(first, second),
+                Math.Min(third, fourth)
             );
+        }
+
+        private static int Gray(
+            Color color)
+        {
+            return (
+                color.R * 299 +
+                color.G * 587 +
+                color.B * 114
+            ) / 1000;
+        }
+
+        private static int ClampInt(
+            int value,
+            int minimum,
+            int maximum)
+        {
+            if (value < minimum)
+                return minimum;
+
+            if (value > maximum)
+                return maximum;
+
+            return value;
         }
 
         private static double Clamp(
