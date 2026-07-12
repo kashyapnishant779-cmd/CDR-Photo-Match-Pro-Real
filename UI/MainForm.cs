@@ -56,6 +56,17 @@ namespace CDRPhotoMatchPro.UI
             }
         }
 
+        private string ManualCropPath
+        {
+            get
+            {
+                return Path.Combine(
+                    QueryDebugPath,
+                    "manual_crop.png"
+                );
+            }
+        }
+
         private TabControl tabs;
         private TabControl previewTabs;
 
@@ -73,15 +84,20 @@ namespace CDRPhotoMatchPro.UI
         private Label status;
         private CancellationTokenSource cts;
 
+        private Button selectAreaButton;
+        private Button clearAreaButton;
         private Button openCdrBtn;
         private Button openFolderBtn;
         private Button copyPathBtn;
 
+        private Bitmap selectedCropBitmap;
+        private string selectedCropSourcePath;
+
         public MainForm()
         {
             Text = "CDR Photo Match Pro";
-            Width = 1250;
-            Height = 720;
+            Width = 1280;
+            Height = 740;
             StartPosition =
                 FormStartPosition.CenterScreen;
 
@@ -89,8 +105,7 @@ namespace CDRPhotoMatchPro.UI
             Directory.CreateDirectory(CachePath);
             Directory.CreateDirectory(QueryDebugPath);
 
-            using (var db =
-                new Database(DbPath))
+            using (var db = new Database(DbPath))
             {
             }
 
@@ -101,26 +116,16 @@ namespace CDRPhotoMatchPro.UI
             DragDrop += OnDragDrop;
         }
 
-        protected override void Dispose(
-            bool disposing)
+        protected override void Dispose(bool disposing)
         {
             if (disposing)
             {
-                DisposePicture(
-                    originalPreview
-                );
+                DisposeSelectedCrop();
 
-                DisposePicture(
-                    cropPreview
-                );
-
-                DisposePicture(
-                    lineArtPreview
-                );
-
-                DisposePicture(
-                    resultPreview
-                );
+                ClearPicture(originalPreview);
+                ClearPicture(cropPreview);
+                ClearPicture(lineArtPreview);
+                ClearPicture(resultPreview);
 
                 if (cts != null)
                 {
@@ -134,11 +139,10 @@ namespace CDRPhotoMatchPro.UI
 
         private void BuildUi()
         {
-            tabs =
-                new TabControl
-                {
-                    Dock = DockStyle.Fill
-                };
+            tabs = new TabControl
+            {
+                Dock = DockStyle.Fill
+            };
 
             Controls.Add(tabs);
 
@@ -147,159 +151,177 @@ namespace CDRPhotoMatchPro.UI
             BuildIndexTab();
             BuildSettingsTab();
 
-            status =
-                new Label
-                {
-                    Dock = DockStyle.Bottom,
-                    Height = 28,
-                    Text = "Ready",
-                    BorderStyle =
-                        BorderStyle.Fixed3D
-                };
+            status = new Label
+            {
+                Dock = DockStyle.Bottom,
+                Height = 28,
+                Text = "Ready",
+                BorderStyle =
+                    BorderStyle.Fixed3D
+            };
 
             Controls.Add(status);
         }
 
         private void BuildSearchTab()
         {
-            var page =
-                new TabPage("Search");
-
+            var page = new TabPage("Search");
             tabs.TabPages.Add(page);
 
-            var top =
-                new Panel
-                {
-                    Dock = DockStyle.Top,
-                    Height = 46
-                };
+            var top = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 78
+            };
 
             page.Controls.Add(top);
 
-            imagePath =
-                new TextBox
-                {
-                    Left = 10,
-                    Top = 12,
-                    Width = 620
-                };
+            imagePath = new TextBox
+            {
+                Left = 10,
+                Top = 12,
+                Width = 600
+            };
 
             top.Controls.Add(imagePath);
 
-            var browse =
-                new Button
-                {
-                    Text = "Browse Image",
-                    Left = 640,
-                    Top = 10,
-                    Width = 110
-                };
+            var browse = new Button
+            {
+                Text = "Browse Image",
+                Left = 620,
+                Top = 10,
+                Width = 110
+            };
 
-            browse.Click +=
-                delegate
-                {
-                    PickImage();
-                };
+            browse.Click += delegate
+            {
+                PickImage();
+            };
 
             top.Controls.Add(browse);
 
-            var search =
-                new Button
-                {
-                    Text = "Search",
-                    Left = 760,
-                    Top = 10,
-                    Width = 90
-                };
+            selectAreaButton = new Button
+            {
+                Text = "Select Jewellery Area",
+                Left = 740,
+                Top = 10,
+                Width = 155
+            };
 
-            search.Click +=
-                delegate
-                {
-                    SearchImage();
-                };
+            selectAreaButton.Click += delegate
+            {
+                SelectJewelleryArea();
+            };
+
+            top.Controls.Add(selectAreaButton);
+
+            clearAreaButton = new Button
+            {
+                Text = "Clear Crop",
+                Left = 905,
+                Top = 10,
+                Width = 90
+            };
+
+            clearAreaButton.Click += delegate
+            {
+                ClearManualCrop();
+            };
+
+            top.Controls.Add(clearAreaButton);
+
+            var search = new Button
+            {
+                Text = "Search",
+                Left = 1005,
+                Top = 10,
+                Width = 90
+            };
+
+            search.Click += delegate
+            {
+                SearchImage();
+            };
 
             top.Controls.Add(search);
 
-            var bottom =
-                new Panel
+            top.Controls.Add(
+                new Label
                 {
-                    Dock = DockStyle.Bottom,
-                    Height = 42
-                };
+                    Left = 10,
+                    Top = 48,
+                    Width = 1080,
+                    Height = 22,
+                    Text =
+                        "Best result ke liye Browse Image ke baad Select Jewellery Area dabao aur sirf jewellery ke around box banao."
+                }
+            );
+
+            var bottom = new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 42
+            };
 
             page.Controls.Add(bottom);
 
-            openCdrBtn =
-                new Button
-                {
-                    Text = "Open CDR",
-                    Left = 10,
-                    Top = 8,
-                    Width = 110
-                };
+            openCdrBtn = new Button
+            {
+                Text = "Open CDR",
+                Left = 10,
+                Top = 8,
+                Width = 110
+            };
 
-            openCdrBtn.Click +=
-                delegate
-                {
-                    OpenSelectedCdr();
-                };
+            openCdrBtn.Click += delegate
+            {
+                OpenSelectedCdr();
+            };
 
             bottom.Controls.Add(openCdrBtn);
 
-            openFolderBtn =
-                new Button
-                {
-                    Text = "Open Folder",
-                    Left = 130,
-                    Top = 8,
-                    Width = 120
-                };
+            openFolderBtn = new Button
+            {
+                Text = "Open Folder",
+                Left = 130,
+                Top = 8,
+                Width = 120
+            };
 
-            openFolderBtn.Click +=
-                delegate
-                {
-                    OpenSelectedFolder();
-                };
+            openFolderBtn.Click += delegate
+            {
+                OpenSelectedFolder();
+            };
 
             bottom.Controls.Add(openFolderBtn);
 
-            copyPathBtn =
-                new Button
-                {
-                    Text = "Copy Full Path",
-                    Left = 260,
-                    Top = 8,
-                    Width = 130
-                };
+            copyPathBtn = new Button
+            {
+                Text = "Copy Full Path",
+                Left = 260,
+                Top = 8,
+                Width = 130
+            };
 
-            copyPathBtn.Click +=
-                delegate
-                {
-                    CopySelectedPath();
-                };
+            copyPathBtn.Click += delegate
+            {
+                CopySelectedPath();
+            };
 
             bottom.Controls.Add(copyPathBtn);
 
-            previewTabs =
-                new TabControl
-                {
-                    Dock = DockStyle.Right,
-                    Width = 350
-                };
+            previewTabs = new TabControl
+            {
+                Dock = DockStyle.Right,
+                Width = 370
+            };
 
             page.Controls.Add(previewTabs);
 
-            originalPreview =
-                CreatePreviewPictureBox();
-
-            cropPreview =
-                CreatePreviewPictureBox();
-
-            lineArtPreview =
-                CreatePreviewPictureBox();
-
-            resultPreview =
-                CreatePreviewPictureBox();
+            originalPreview = CreatePreviewPictureBox();
+            cropPreview = CreatePreviewPictureBox();
+            lineArtPreview = CreatePreviewPictureBox();
+            resultPreview = CreatePreviewPictureBox();
 
             AddPreviewTab(
                 "Original JPG",
@@ -307,7 +329,7 @@ namespace CDRPhotoMatchPro.UI
             );
 
             AddPreviewTab(
-                "Extracted Crop",
+                "Selected Crop",
                 cropPreview
             );
 
@@ -321,28 +343,24 @@ namespace CDRPhotoMatchPro.UI
                 resultPreview
             );
 
-            grid =
-                new DataGridView
-                {
-                    Dock = DockStyle.Fill,
-                    ReadOnly = true,
-                    AutoGenerateColumns = false,
-                    AllowUserToAddRows = false,
-                    SelectionMode =
-                        DataGridViewSelectionMode
-                            .FullRowSelect,
-                    MultiSelect = false,
-                    AutoSizeRowsMode =
-                        DataGridViewAutoSizeRowsMode
-                            .None
-                };
+            grid = new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                ReadOnly = true,
+                AutoGenerateColumns = false,
+                AllowUserToAddRows = false,
+                SelectionMode =
+                    DataGridViewSelectionMode.FullRowSelect,
+                MultiSelect = false,
+                AutoSizeRowsMode =
+                    DataGridViewAutoSizeRowsMode.None
+            };
 
             grid.Columns.Add(
                 new DataGridViewTextBoxColumn
                 {
                     HeaderText = "Match %",
-                    DataPropertyName =
-                        "MatchPercent",
+                    DataPropertyName = "MatchPercent",
                     Width = 80
                 }
             );
@@ -351,8 +369,7 @@ namespace CDRPhotoMatchPro.UI
                 new DataGridViewTextBoxColumn
                 {
                     HeaderText = "CDR File",
-                    DataPropertyName =
-                        "CdrFileName",
+                    DataPropertyName = "CdrFileName",
                     Width = 140
                 }
             );
@@ -360,11 +377,9 @@ namespace CDRPhotoMatchPro.UI
             grid.Columns.Add(
                 new DataGridViewTextBoxColumn
                 {
-                    HeaderText =
-                        "Full CDR Path",
-                    DataPropertyName =
-                        "CdrPath",
-                    Width = 430
+                    HeaderText = "Full CDR Path",
+                    DataPropertyName = "CdrPath",
+                    Width = 400
                 }
             );
 
@@ -372,8 +387,7 @@ namespace CDRPhotoMatchPro.UI
                 new DataGridViewTextBoxColumn
                 {
                     HeaderText = "Page",
-                    DataPropertyName =
-                        "PageNumber",
+                    DataPropertyName = "PageNumber",
                     Width = 55
                 }
             );
@@ -382,8 +396,7 @@ namespace CDRPhotoMatchPro.UI
                 new DataGridViewTextBoxColumn
                 {
                     HeaderText = "Design No",
-                    DataPropertyName =
-                        "DesignNumber",
+                    DataPropertyName = "DesignNumber",
                     Width = 75
                 }
             );
@@ -392,8 +405,7 @@ namespace CDRPhotoMatchPro.UI
                 new DataGridViewTextBoxColumn
                 {
                     HeaderText = "Mode",
-                    DataPropertyName =
-                        "ExportMode",
+                    DataPropertyName = "ExportMode",
                     Width = 80
                 }
             );
@@ -402,29 +414,24 @@ namespace CDRPhotoMatchPro.UI
                 new DataGridViewTextBoxColumn
                 {
                     HeaderText = "Shapes",
-                    DataPropertyName =
-                        "ShapeCount",
+                    DataPropertyName = "ShapeCount",
                     Width = 60
                 }
             );
 
-            grid.DoubleClick +=
-                OnGridDoubleClick;
-
+            grid.DoubleClick += OnGridDoubleClick;
             grid.SelectionChanged +=
                 OnGridSelectionChanged;
 
             page.Controls.Add(grid);
         }
 
-        private PictureBox
-            CreatePreviewPictureBox()
+        private static PictureBox CreatePreviewPictureBox()
         {
             return new PictureBox
             {
                 Dock = DockStyle.Fill,
-                SizeMode =
-                    PictureBoxSizeMode.Zoom,
+                SizeMode = PictureBoxSizeMode.Zoom,
                 BorderStyle =
                     BorderStyle.FixedSingle,
                 BackColor = Color.White
@@ -435,81 +442,69 @@ namespace CDRPhotoMatchPro.UI
             string title,
             PictureBox pictureBox)
         {
-            var page =
-                new TabPage(title);
-
+            var page = new TabPage(title);
             page.Controls.Add(pictureBox);
             previewTabs.TabPages.Add(page);
         }
 
         private void BuildScanTab()
         {
-            var page =
-                new TabPage("Scan");
-
+            var page = new TabPage("Scan");
             tabs.TabPages.Add(page);
 
-            scanRoot =
-                new TextBox
-                {
-                    Left = 20,
-                    Top = 25,
-                    Width = 500,
-                    Text = "D:\\"
-                };
+            scanRoot = new TextBox
+            {
+                Left = 20,
+                Top = 25,
+                Width = 500,
+                Text = "D:\\"
+            };
 
             page.Controls.Add(scanRoot);
 
-            var start =
-                new Button
-                {
-                    Text =
-                        "Start Incremental Scan",
-                    Left = 540,
-                    Top = 23,
-                    Width = 160
-                };
+            var start = new Button
+            {
+                Text = "Start Incremental Scan",
+                Left = 540,
+                Top = 23,
+                Width = 160
+            };
 
-            start.Click +=
-                delegate
-                {
-                    StartScan(false);
-                };
+            start.Click += delegate
+            {
+                StartScan(false);
+            };
 
             page.Controls.Add(start);
 
-            var rescan =
-                new Button
-                {
-                    Text = "Full Rescan",
-                    Left = 710,
-                    Top = 23,
-                    Width = 110
-                };
+            var rescan = new Button
+            {
+                Text = "Full Rescan",
+                Left = 710,
+                Top = 23,
+                Width = 110
+            };
 
-            rescan.Click +=
-                delegate
-                {
-                    StartScan(true);
-                };
+            rescan.Click += delegate
+            {
+                StartScan(true);
+            };
 
             page.Controls.Add(rescan);
 
-            var cancel =
-                new Button
-                {
-                    Text = "Cancel",
-                    Left = 830,
-                    Top = 23,
-                    Width = 90
-                };
+            var cancel = new Button
+            {
+                Text = "Cancel",
+                Left = 830,
+                Top = 23,
+                Width = 90
+            };
 
-            cancel.Click +=
-                delegate
-                {
-                    if (cts != null)
-                        cts.Cancel();
-                };
+            cancel.Click += delegate
+            {
+                if (cts != null)
+                    cts.Cancel();
+            };
 
             page.Controls.Add(cancel);
 
@@ -528,104 +523,84 @@ namespace CDRPhotoMatchPro.UI
 
         private void BuildIndexTab()
         {
-            var page =
-                new TabPage("Index");
-
+            var page = new TabPage("Index");
             tabs.TabPages.Add(page);
 
-            var openDb =
-                new Button
-                {
-                    Text =
-                        "Open Database Folder",
-                    Left = 20,
-                    Top = 25,
-                    Width = 180
-                };
+            var openDb = new Button
+            {
+                Text = "Open Database Folder",
+                Left = 20,
+                Top = 25,
+                Width = 180
+            };
 
-            openDb.Click +=
-                delegate
-                {
-                    Process.Start(AppRoot);
-                };
+            openDb.Click += delegate
+            {
+                Process.Start(AppRoot);
+            };
 
             page.Controls.Add(openDb);
 
-            var openCache =
-                new Button
-                {
-                    Text =
-                        "Open Thumbnail Cache",
-                    Left = 220,
-                    Top = 25,
-                    Width = 180
-                };
+            var openCache = new Button
+            {
+                Text = "Open Thumbnail Cache",
+                Left = 220,
+                Top = 25,
+                Width = 180
+            };
 
-            openCache.Click +=
-                delegate
-                {
-                    Process.Start(CachePath);
-                };
+            openCache.Click += delegate
+            {
+                Process.Start(CachePath);
+            };
 
             page.Controls.Add(openCache);
 
-            var openQueryDebug =
-                new Button
-                {
-                    Text =
-                        "Open Query Debug",
-                    Left = 420,
-                    Top = 25,
-                    Width = 160
-                };
+            var openDebug = new Button
+            {
+                Text = "Open Query Debug",
+                Left = 420,
+                Top = 25,
+                Width = 160
+            };
 
-            openQueryDebug.Click +=
-                delegate
+            openDebug.Click += delegate
+            {
+                Directory.CreateDirectory(
+                    QueryDebugPath
+                );
+
+                Process.Start(QueryDebugPath);
+            };
+
+            page.Controls.Add(openDebug);
+
+            var count = new Button
+            {
+                Text = "Show Indexed Count",
+                Left = 590,
+                Top = 25,
+                Width = 150
+            };
+
+            count.Click += delegate
+            {
+                using (var db =
+                    new Database(DbPath))
                 {
-                    Directory.CreateDirectory(
-                        QueryDebugPath
+                    MessageBox.Show(
+                        "Indexed designs: " +
+                        db.LoadDesigns().Count
                     );
-
-                    Process.Start(
-                        QueryDebugPath
-                    );
-                };
-
-            page.Controls.Add(
-                openQueryDebug
-            );
-
-            var count =
-                new Button
-                {
-                    Text =
-                        "Show Indexed Count",
-                    Left = 590,
-                    Top = 25,
-                    Width = 150
-                };
-
-            count.Click +=
-                delegate
-                {
-                    using (var db =
-                        new Database(DbPath))
-                    {
-                        MessageBox.Show(
-                            "Indexed designs: " +
-                            db.LoadDesigns().Count
-                        );
-                    }
-                };
+                }
+            };
 
             page.Controls.Add(count);
         }
 
         private void BuildSettingsTab()
         {
-            var page =
-                new TabPage("Settings");
-
+            var page = new TabPage("Settings");
             tabs.TabPages.Add(page);
 
             page.Controls.Add(
@@ -634,19 +609,17 @@ namespace CDRPhotoMatchPro.UI
                     Left = 20,
                     Top = 28,
                     Width = 180,
-                    Text =
-                        "Minimum match %"
+                    Text = "Minimum match %"
                 }
             );
 
-            thresholdBox =
-                new TextBox
-                {
-                    Left = 210,
-                    Top = 24,
-                    Width = 80,
-                    Text = "45"
-                };
+            thresholdBox = new TextBox
+            {
+                Left = 210,
+                Top = 24,
+                Width = 80,
+                Text = "45"
+            };
 
             page.Controls.Add(thresholdBox);
 
@@ -655,27 +628,27 @@ namespace CDRPhotoMatchPro.UI
                 {
                     Left = 20,
                     Top = 65,
-                    Width = 850,
+                    Width = 900,
                     Text =
-                        "45 recommended. Lower value = more possible matches. Higher value = stricter exact match."
+                        "Abhi sab top results dikhaye jaate hain. Match % ranking check karne ke liye hai."
                 }
             );
         }
 
         private void PickImage()
         {
-            using (var ofd =
+            using (var dialog =
                 new OpenFileDialog
                 {
                     Filter =
                         "Images|*.jpg;*.jpeg;*.png;*.bmp"
                 })
             {
-                if (ofd.ShowDialog(this) ==
+                if (dialog.ShowDialog(this) ==
                     DialogResult.OK)
                 {
                     LoadSelectedQueryImage(
-                        ofd.FileName
+                        dialog.FileName
                     );
                 }
             }
@@ -692,6 +665,8 @@ namespace CDRPhotoMatchPro.UI
 
             imagePath.Text = path;
 
+            DisposeSelectedCrop();
+
             SetPictureFromFile(
                 originalPreview,
                 path
@@ -701,10 +676,153 @@ namespace CDRPhotoMatchPro.UI
             ClearPicture(lineArtPreview);
             ClearPicture(resultPreview);
 
+            grid.DataSource = null;
+
             previewTabs.SelectedIndex = 0;
 
             status.Text =
-                "Image selected. Press Search.";
+                "Image selected. Ab Select Jewellery Area dabao.";
+        }
+
+        private void SelectJewelleryArea()
+        {
+            if (string.IsNullOrEmpty(
+                    imagePath.Text
+                ) ||
+                !File.Exists(imagePath.Text))
+            {
+                MessageBox.Show(
+                    "Pehle valid JPG select karo."
+                );
+
+                return;
+            }
+
+            Bitmap source = null;
+
+            try
+            {
+                source =
+                    new Bitmap(imagePath.Text);
+
+                using (var dialog =
+                    new CropSelectionForm(source))
+                {
+                    if (dialog.ShowDialog(this) !=
+                        DialogResult.OK)
+                    {
+                        return;
+                    }
+
+                    Bitmap crop =
+                        dialog.TakeSelectedCrop();
+
+                    if (crop == null)
+                    {
+                        MessageBox.Show(
+                            "Selection nahi bani. Jewellery ke around mouse se box banao."
+                        );
+
+                        return;
+                    }
+
+                    DisposeSelectedCrop();
+
+                    selectedCropBitmap = crop;
+                    selectedCropSourcePath =
+                        imagePath.Text;
+
+                    Directory.CreateDirectory(
+                        QueryDebugPath
+                    );
+
+                    SaveBitmapSafe(
+                        selectedCropBitmap,
+                        ManualCropPath
+                    );
+
+                    SetPictureFromBitmap(
+                        cropPreview,
+                        selectedCropBitmap
+                    );
+
+                    previewTabs.SelectedIndex = 1;
+
+                    status.Text =
+                        "Manual jewellery crop ready. Ab Search dabao.";
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    "Crop selection error:\r\n" +
+                    ex.Message
+                );
+            }
+            finally
+            {
+                if (source != null)
+                    source.Dispose();
+            }
+        }
+
+        private void ClearManualCrop()
+        {
+            DisposeSelectedCrop();
+
+            ClearPicture(cropPreview);
+            ClearPicture(lineArtPreview);
+
+            try
+            {
+                if (File.Exists(ManualCropPath))
+                    File.Delete(ManualCropPath);
+            }
+            catch
+            {
+            }
+
+            status.Text =
+                "Manual crop cleared. Original JPG fallback use hogi.";
+        }
+
+        private void DisposeSelectedCrop()
+        {
+            if (selectedCropBitmap != null)
+            {
+                selectedCropBitmap.Dispose();
+                selectedCropBitmap = null;
+            }
+
+            selectedCropSourcePath = null;
+        }
+
+        private string PrepareSearchImage()
+        {
+            bool validManualCrop =
+                selectedCropBitmap != null &&
+                !string.IsNullOrEmpty(
+                    selectedCropSourcePath
+                ) &&
+                string.Equals(
+                    selectedCropSourcePath,
+                    imagePath.Text,
+                    StringComparison.OrdinalIgnoreCase
+                );
+
+            if (!validManualCrop)
+                return imagePath.Text;
+
+            Directory.CreateDirectory(
+                QueryDebugPath
+            );
+
+            SaveBitmapSafe(
+                selectedCropBitmap,
+                ManualCropPath
+            );
+
+            return ManualCropPath;
         }
 
         private void SearchImage()
@@ -718,191 +836,34 @@ namespace CDRPhotoMatchPro.UI
                 return;
             }
 
+            string searchImagePath =
+                PrepareSearchImage();
+
+            bool manualCropUsed =
+                string.Equals(
+                    searchImagePath,
+                    ManualCropPath,
+                    StringComparison.OrdinalIgnoreCase
+                );
+
             status.Text =
-                "Extracting jewellery and removing background...";
+                manualCropUsed
+                    ? "Searching selected jewellery crop..."
+                    : "No manual crop. Searching original JPG fallback...";
 
             Application.DoEvents();
 
-            string originalDebugPath =
-                Path.Combine(
-                    QueryDebugPath,
-                    "01_original.png"
-                );
+            ShowDiagnosticLineArt(
+                searchImagePath
+            );
 
-            string cropDebugPath =
-                Path.Combine(
-                    QueryDebugPath,
-                    "02_extracted_crop.png"
-                );
-
-            string silhouetteDebugPath =
-                Path.Combine(
-                    QueryDebugPath,
-                    "03_silhouette.png"
-                );
-
-            string lineArtDebugPath =
-                Path.Combine(
-                    QueryDebugPath,
-                    "04_line_art.png"
-                );
-
-            string preprocessMethod =
-                "UNKNOWN";
-
-            double preprocessConfidence = 0;
-            bool usedFallback = true;
-
-            ImagePreprocessResult processed = null;
-
-            try
-            {
-                Directory.CreateDirectory(
-                    QueryDebugPath
-                );
-
-                using (Bitmap source =
-                    new Bitmap(imagePath.Text))
-                {
-                    SaveBitmapSafe(
-                        source,
-                        originalDebugPath
-                    );
-
-                    processed =
-                        ImagePreprocessor.Process(
-                            source
-                        );
-                }
-
-                if (processed != null)
-                {
-                    preprocessMethod =
-                        string.IsNullOrEmpty(
-                            processed.Method
-                        )
-                            ? "UNKNOWN"
-                            : processed.Method;
-
-                    preprocessConfidence =
-                        processed.Confidence;
-
-                    usedFallback =
-                        processed.UsedFallback;
-
-                    if (processed.CroppedOriginal !=
-                        null)
-                    {
-                        SaveBitmapSafe(
-                            processed.CroppedOriginal,
-                            cropDebugPath
-                        );
-
-                        SetPictureFromBitmap(
-                            cropPreview,
-                            processed.CroppedOriginal
-                        );
-                    }
-                    else
-                    {
-                        ClearPicture(
-                            cropPreview
-                        );
-                    }
-
-                    if (processed.Silhouette !=
-                        null)
-                    {
-                        SaveBitmapSafe(
-                            processed.Silhouette,
-                            silhouetteDebugPath
-                        );
-                    }
-
-                    if (processed.LineArt != null)
-                    {
-                        SaveBitmapSafe(
-                            processed.LineArt,
-                            lineArtDebugPath
-                        );
-
-                        SetPictureFromBitmap(
-                            lineArtPreview,
-                            processed.LineArt
-                        );
-                    }
-                    else
-                    {
-                        ClearPicture(
-                            lineArtPreview
-                        );
-                    }
-                }
-
-                previewTabs.SelectedIndex = 2;
-            }
-            catch (Exception ex)
-            {
-                ClearPicture(cropPreview);
-                ClearPicture(lineArtPreview);
-
-                preprocessMethod =
-                    "PREPROCESS-ERROR";
-
-                preprocessConfidence = 0;
-                usedFallback = true;
-
-                MessageBox.Show(
-                    "Preprocessing error:\r\n" +
-                    ex.Message
-                );
-            }
-            finally
-            {
-                if (processed != null)
-                    processed.Dispose();
-            }
-
-            status.Text =
-                "Extracted: " +
-                preprocessMethod +
-                " | Confidence: " +
-                (
-                    preprocessConfidence *
-                    100.0
-                ).ToString("0.0") +
-                "%" +
-                (
-                    usedFallback
-                        ? " | FALLBACK USED"
-                        : ""
-                ) +
-                " | Searching...";
-
-            Application.DoEvents();
-
-            double threshold;
-
-            if (!double.TryParse(
-                    thresholdBox.Text,
-                    out threshold
-                ))
-            {
-                threshold = 60;
-            }
-
-            if (threshold < 60)
-                threshold = 60;
-
-            var matcher =
-                new ImageMatcher();
-
+            var matcher = new ImageMatcher();
             var results =
                 new List<MatchResult>();
 
             byte[] query =
                 matcher.ExtractDescriptorBytes(
-                    imagePath.Text
+                    searchImagePath
                 );
 
             using (var db =
@@ -931,35 +892,33 @@ namespace CDRPhotoMatchPro.UI
                             : design.ExportMode
                                 .ToUpperInvariant();
 
-                    if (mode ==
-                        "FULL-PAGE-HD")
-                    {
-                        score += 5;
-                    }
+                    /*
+                     * Pehle ke bade artificial bonuses hata diye.
+                     * Ranking ab matcher par depend karegi.
+                     */
+
+                    if (mode == "GROUP-HD")
+                        score += 1.5;
+
+                    if (mode == "FULL-PAGE-HD")
+                        score -= 2.0;
 
                     if (mode == "OBJECT-HD" &&
                         design.ShapeCount <= 1)
                     {
-                        score -= 12;
+                        score -= 2.0;
                     }
 
-                    if (mode == "GROUP-HD")
-                        score += 3;
-
-                    if (score > 100)
-                        score = 100;
-
-                    if (score < 0)
-                        score = 0;
+                    score = Math.Max(
+                        0,
+                        Math.Min(100, score)
+                    );
 
                     results.Add(
                         new MatchResult
                         {
                             MatchPercent =
-                                Math.Round(
-                                    score,
-                                    2
-                                ),
+                                Math.Round(score, 2),
 
                             CdrFileName =
                                 design.FileName,
@@ -995,34 +954,22 @@ namespace CDRPhotoMatchPro.UI
                 }
             }
 
+            /*
+             * Ab har page ka sirf ek result nahi.
+             * Exact design object ko hide nahi karna.
+             */
+
             var top =
                 results
-                    .GroupBy(
-                        item =>
-                            (
-                                item.CdrPath ?? ""
-                            ) +
-                            "|" +
-                            item.PageNumber
-                    )
-                    .Select(
-                        group =>
-                            group
-                                .OrderByDescending(
-                                    item =>
-                                        item.MatchPercent
-                                )
-                                .ThenByDescending(
-                                    item =>
-                                        item.ShapeCount
-                                )
-                                .First()
-                    )
                     .OrderByDescending(
                         item =>
                             item.MatchPercent
                     )
-                    .Take(50)
+                    .ThenByDescending(
+                        item =>
+                            item.ShapeCount
+                    )
+                    .Take(100)
                     .ToList();
 
             grid.DataSource = top;
@@ -1030,51 +977,88 @@ namespace CDRPhotoMatchPro.UI
             if (top.Count == 0)
             {
                 status.Text =
-                    "NO RESULT | Extracted: " +
-                    preprocessMethod +
-                    " | Confidence: " +
+                    "NO RESULT | " +
                     (
-                        preprocessConfidence *
-                        100.0
-                    ).ToString("0.0") +
-                    "%";
+                        manualCropUsed
+                            ? "Manual crop used"
+                            : "Original fallback used"
+                    );
 
-                previewTabs.SelectedIndex = 2;
+                return;
             }
-            else
+
+            status.Text =
+                (
+                    manualCropUsed
+                        ? "Manual crop used"
+                        : "Original fallback used"
+                ) +
+                " | Best match: " +
+                top[0].MatchPercent +
+                "% | " +
+                top[0].CdrPath +
+                " | Page " +
+                top[0].PageNumber +
+                " | Design " +
+                top[0].DesignNumber +
+                " | Mode " +
+                top[0].ExportMode;
+
+            previewTabs.SelectedIndex = 1;
+        }
+
+        private void ShowDiagnosticLineArt(
+            string searchImagePath)
+        {
+            if (string.IsNullOrEmpty(
+                    searchImagePath
+                ) ||
+                !File.Exists(searchImagePath))
             {
-                status.Text =
-                    "Extracted: " +
-                    preprocessMethod +
-                    " | Confidence: " +
-                    (
-                        preprocessConfidence *
-                        100.0
-                    ).ToString("0.0") +
-                    "% | Best match: " +
-                    top[0].MatchPercent +
-                    "% | " +
-                    top[0].CdrPath +
-                    " | Page " +
-                    top[0].PageNumber +
-                    " | Design " +
-                    top[0].DesignNumber +
-                    " | Mode " +
-                    top[0].ExportMode;
+                ClearPicture(lineArtPreview);
+                return;
+            }
 
-                /*
-                 * Line Art tab par hi rehne do,
-                 * taaki extraction clearly dikhe.
-                 * Result Preview tab user manually
-                 * click kar sakta hai.
-                 */
+            ImagePreprocessResult processed = null;
 
-                previewTabs.SelectedIndex = 2;
+            try
+            {
+                using (Bitmap source =
+                    new Bitmap(searchImagePath))
+                {
+                    processed =
+                        ImagePreprocessor.Process(
+                            source
+                        );
+                }
+
+                if (processed != null &&
+                    processed.LineArt != null)
+                {
+                    SetPictureFromBitmap(
+                        lineArtPreview,
+                        processed.LineArt
+                    );
+                }
+                else
+                {
+                    ClearPicture(
+                        lineArtPreview
+                    );
+                }
+            }
+            catch
+            {
+                ClearPicture(lineArtPreview);
+            }
+            finally
+            {
+                if (processed != null)
+                    processed.Dispose();
             }
         }
 
-        private async void StartScan(
-            bool full)
+        private async void StartScan(bool full)
         {
             if (!Directory.Exists(
                     scanRoot.Text
@@ -1132,9 +1116,7 @@ namespace CDRPhotoMatchPro.UI
                 status.Text =
                     "Indexing complete";
             }
-            catch (
-                OperationCanceledException
-            )
+            catch (OperationCanceledException)
             {
                 status.Text =
                     "Indexing cancelled";
@@ -1198,9 +1180,7 @@ namespace CDRPhotoMatchPro.UI
             if (item != null &&
                 File.Exists(item.CdrPath))
             {
-                Process.Start(
-                    item.CdrPath
-                );
+                Process.Start(item.CdrPath);
             }
         }
 
@@ -1227,9 +1207,7 @@ namespace CDRPhotoMatchPro.UI
             }
 
             if (Directory.Exists(folder))
-            {
                 Process.Start(folder);
-            }
         }
 
         private void CopySelectedPath()
@@ -1305,24 +1283,20 @@ namespace CDRPhotoMatchPro.UI
             string directory =
                 Path.GetDirectoryName(path);
 
-            if (!string.IsNullOrEmpty(
-                    directory
-                ))
+            if (!string.IsNullOrEmpty(directory))
             {
                 Directory.CreateDirectory(
                     directory
                 );
             }
 
-            if (File.Exists(path))
+            try
             {
-                try
-                {
+                if (File.Exists(path))
                     File.Delete(path);
-                }
-                catch
-                {
-                }
+            }
+            catch
+            {
             }
 
             bitmap.Save(
@@ -1331,17 +1305,14 @@ namespace CDRPhotoMatchPro.UI
             );
         }
 
-        private static void
-            SetPictureFromFile(
-                PictureBox pictureBox,
-                string path)
+        private static void SetPictureFromFile(
+            PictureBox pictureBox,
+            string path)
         {
-            if (pictureBox == null)
-                return;
-
             ClearPicture(pictureBox);
 
-            if (string.IsNullOrEmpty(path) ||
+            if (pictureBox == null ||
+                string.IsNullOrEmpty(path) ||
                 !File.Exists(path))
             {
                 return;
@@ -1362,18 +1333,17 @@ namespace CDRPhotoMatchPro.UI
             }
         }
 
-        private static void
-            SetPictureFromBitmap(
-                PictureBox pictureBox,
-                Bitmap bitmap)
+        private static void SetPictureFromBitmap(
+            PictureBox pictureBox,
+            Bitmap bitmap)
         {
-            if (pictureBox == null)
-                return;
-
             ClearPicture(pictureBox);
 
-            if (bitmap == null)
+            if (pictureBox == null ||
+                bitmap == null)
+            {
                 return;
+            }
 
             try
             {
@@ -1392,17 +1362,17 @@ namespace CDRPhotoMatchPro.UI
             if (pictureBox == null)
                 return;
 
-            Image previous =
+            Image oldImage =
                 pictureBox.Image;
 
             pictureBox.Image = null;
             pictureBox.ImageLocation = null;
 
-            if (previous != null)
+            if (oldImage != null)
             {
                 try
                 {
-                    previous.Dispose();
+                    oldImage.Dispose();
                 }
                 catch
                 {
@@ -1410,20 +1380,447 @@ namespace CDRPhotoMatchPro.UI
             }
         }
 
-        private static void DisposePicture(
-            PictureBox pictureBox)
+        /*
+         * Manual crop selection dialog.
+         * Isi MainForm.cs ke andar rakha hai,
+         * isliye nayi project file add nahi karni.
+         */
+
+        private sealed class CropSelectionForm : Form
         {
-            if (pictureBox == null)
-                return;
+            private readonly Bitmap sourceBitmap;
+            private readonly PictureBox pictureBox;
+            private readonly Button useButton;
+            private readonly Button cancelButton;
+            private readonly Label instructionLabel;
 
-            ClearPicture(pictureBox);
+            private Point dragStart;
+            private Rectangle selectionDisplay;
+            private bool dragging;
+            private Bitmap selectedCrop;
 
-            try
+            public CropSelectionForm(
+                Bitmap source)
             {
-                pictureBox.Dispose();
+                sourceBitmap =
+                    new Bitmap(source);
+
+                Text = "Select Jewellery Area";
+                Width = 1000;
+                Height = 760;
+                StartPosition =
+                    FormStartPosition.CenterParent;
+
+                instructionLabel = new Label
+                {
+                    Dock = DockStyle.Top,
+                    Height = 35,
+                    Text =
+                        "Mouse se jewellery ke around rectangle banao. Phir Use Selection dabao.",
+                    TextAlign =
+                        ContentAlignment.MiddleCenter
+                };
+
+                Controls.Add(
+                    instructionLabel
+                );
+
+                var bottom = new Panel
+                {
+                    Dock = DockStyle.Bottom,
+                    Height = 50
+                };
+
+                Controls.Add(bottom);
+
+                useButton = new Button
+                {
+                    Text = "Use Selection",
+                    Left = 360,
+                    Top = 10,
+                    Width = 130
+                };
+
+                useButton.Click +=
+                    OnUseSelection;
+
+                bottom.Controls.Add(useButton);
+
+                cancelButton = new Button
+                {
+                    Text = "Cancel",
+                    Left = 510,
+                    Top = 10,
+                    Width = 100
+                };
+
+                cancelButton.Click +=
+                    delegate
+                    {
+                        DialogResult =
+                            DialogResult.Cancel;
+
+                        Close();
+                    };
+
+                bottom.Controls.Add(cancelButton);
+
+                pictureBox = new PictureBox
+                {
+                    Dock = DockStyle.Fill,
+                    BackColor = Color.DimGray,
+                    SizeMode =
+                        PictureBoxSizeMode.Zoom,
+                    Image =
+                        new Bitmap(sourceBitmap)
+                };
+
+                pictureBox.MouseDown +=
+                    OnPictureMouseDown;
+
+                pictureBox.MouseMove +=
+                    OnPictureMouseMove;
+
+                pictureBox.MouseUp +=
+                    OnPictureMouseUp;
+
+                pictureBox.Paint +=
+                    OnPicturePaint;
+
+                Controls.Add(pictureBox);
+
+                AcceptButton = useButton;
+                CancelButton = cancelButton;
             }
-            catch
+
+            protected override void Dispose(
+                bool disposing)
             {
+                if (disposing)
+                {
+                    if (pictureBox != null &&
+                        pictureBox.Image != null)
+                    {
+                        pictureBox.Image.Dispose();
+                        pictureBox.Image = null;
+                    }
+
+                    sourceBitmap.Dispose();
+
+                    if (selectedCrop != null)
+                    {
+                        selectedCrop.Dispose();
+                        selectedCrop = null;
+                    }
+                }
+
+                base.Dispose(disposing);
+            }
+
+            public Bitmap TakeSelectedCrop()
+            {
+                if (selectedCrop == null)
+                    return null;
+
+                Bitmap result =
+                    selectedCrop;
+
+                selectedCrop = null;
+
+                return result;
+            }
+
+            private void OnPictureMouseDown(
+                object sender,
+                MouseEventArgs e)
+            {
+                if (e.Button !=
+                    MouseButtons.Left)
+                {
+                    return;
+                }
+
+                dragStart = e.Location;
+                selectionDisplay =
+                    Rectangle.Empty;
+
+                dragging = true;
+
+                pictureBox.Invalidate();
+            }
+
+            private void OnPictureMouseMove(
+                object sender,
+                MouseEventArgs e)
+            {
+                if (!dragging)
+                    return;
+
+                selectionDisplay =
+                    NormalizeRectangle(
+                        dragStart,
+                        e.Location
+                    );
+
+                pictureBox.Invalidate();
+            }
+
+            private void OnPictureMouseUp(
+                object sender,
+                MouseEventArgs e)
+            {
+                if (!dragging)
+                    return;
+
+                dragging = false;
+
+                selectionDisplay =
+                    NormalizeRectangle(
+                        dragStart,
+                        e.Location
+                    );
+
+                pictureBox.Invalidate();
+            }
+
+            private void OnPicturePaint(
+                object sender,
+                PaintEventArgs e)
+            {
+                if (selectionDisplay.Width <= 0 ||
+                    selectionDisplay.Height <= 0)
+                {
+                    return;
+                }
+
+                using (var pen =
+                    new Pen(Color.Red, 3))
+                {
+                    e.Graphics.DrawRectangle(
+                        pen,
+                        selectionDisplay
+                    );
+                }
+            }
+
+            private void OnUseSelection(
+                object sender,
+                EventArgs e)
+            {
+                if (selectionDisplay.Width < 10 ||
+                    selectionDisplay.Height < 10)
+                {
+                    MessageBox.Show(
+                        "Jewellery ke around thoda bada rectangle banao."
+                    );
+
+                    return;
+                }
+
+                Rectangle imageDisplay =
+                    GetDisplayedImageRectangle(
+                        pictureBox,
+                        sourceBitmap
+                    );
+
+                Rectangle clipped =
+                    Rectangle.Intersect(
+                        selectionDisplay,
+                        imageDisplay
+                    );
+
+                if (clipped.Width < 5 ||
+                    clipped.Height < 5)
+                {
+                    MessageBox.Show(
+                        "Selection image ke andar banao."
+                    );
+
+                    return;
+                }
+
+                double scaleX =
+                    sourceBitmap.Width /
+                    (double)imageDisplay.Width;
+
+                double scaleY =
+                    sourceBitmap.Height /
+                    (double)imageDisplay.Height;
+
+                int sourceX =
+                    (int)Math.Round(
+                        (
+                            clipped.Left -
+                            imageDisplay.Left
+                        ) *
+                        scaleX
+                    );
+
+                int sourceY =
+                    (int)Math.Round(
+                        (
+                            clipped.Top -
+                            imageDisplay.Top
+                        ) *
+                        scaleY
+                    );
+
+                int sourceWidth =
+                    (int)Math.Round(
+                        clipped.Width *
+                        scaleX
+                    );
+
+                int sourceHeight =
+                    (int)Math.Round(
+                        clipped.Height *
+                        scaleY
+                    );
+
+                Rectangle sourceRectangle =
+                    new Rectangle(
+                        sourceX,
+                        sourceY,
+                        sourceWidth,
+                        sourceHeight
+                    );
+
+                sourceRectangle.Intersect(
+                    new Rectangle(
+                        0,
+                        0,
+                        sourceBitmap.Width,
+                        sourceBitmap.Height
+                    )
+                );
+
+                if (sourceRectangle.Width < 5 ||
+                    sourceRectangle.Height < 5)
+                {
+                    MessageBox.Show(
+                        "Valid jewellery area select nahi hui."
+                    );
+
+                    return;
+                }
+
+                if (selectedCrop != null)
+                    selectedCrop.Dispose();
+
+                selectedCrop =
+                    sourceBitmap.Clone(
+                        sourceRectangle,
+                        PixelFormat.Format24bppRgb
+                    );
+
+                DialogResult =
+                    DialogResult.OK;
+
+                Close();
+            }
+
+            private static Rectangle
+                NormalizeRectangle(
+                    Point first,
+                    Point second)
+            {
+                int left =
+                    Math.Min(
+                        first.X,
+                        second.X
+                    );
+
+                int top =
+                    Math.Min(
+                        first.Y,
+                        second.Y
+                    );
+
+                int right =
+                    Math.Max(
+                        first.X,
+                        second.X
+                    );
+
+                int bottom =
+                    Math.Max(
+                        first.Y,
+                        second.Y
+                    );
+
+                return Rectangle.FromLTRB(
+                    left,
+                    top,
+                    right,
+                    bottom
+                );
+            }
+
+            private static Rectangle
+                GetDisplayedImageRectangle(
+                    PictureBox box,
+                    Image image)
+            {
+                if (box == null ||
+                    image == null ||
+                    box.ClientSize.Width <= 0 ||
+                    box.ClientSize.Height <= 0)
+                {
+                    return Rectangle.Empty;
+                }
+
+                double imageRatio =
+                    image.Width /
+                    (double)image.Height;
+
+                double boxRatio =
+                    box.ClientSize.Width /
+                    (double)box.ClientSize.Height;
+
+                int displayWidth;
+                int displayHeight;
+
+                if (imageRatio > boxRatio)
+                {
+                    displayWidth =
+                        box.ClientSize.Width;
+
+                    displayHeight =
+                        (int)Math.Round(
+                            displayWidth /
+                            imageRatio
+                        );
+                }
+                else
+                {
+                    displayHeight =
+                        box.ClientSize.Height;
+
+                    displayWidth =
+                        (int)Math.Round(
+                            displayHeight *
+                            imageRatio
+                        );
+                }
+
+                int left =
+                    (
+                        box.ClientSize.Width -
+                        displayWidth
+                    ) / 2;
+
+                int top =
+                    (
+                        box.ClientSize.Height -
+                        displayHeight
+                    ) / 2;
+
+                return new Rectangle(
+                    left,
+                    top,
+                    displayWidth,
+                    displayHeight
+                );
             }
         }
     }
