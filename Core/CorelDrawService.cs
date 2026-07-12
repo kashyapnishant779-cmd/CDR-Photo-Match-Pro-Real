@@ -70,7 +70,7 @@ namespace CDRPhotoMatchPro.Core
                     );
 
                     List<ShapeInfo> usable =
-                        CollectUsableShapes(page, shapeCount);
+                        CollectUsableShapes(page, shapeCount, pageNo);
 
                     Log("USABLE-SHAPES=" + usable.Count);
 
@@ -287,7 +287,8 @@ namespace CDRPhotoMatchPro.Core
 
         private List<ShapeInfo> CollectUsableShapes(
             dynamic page,
-            int shapeCount)
+            int shapeCount,
+            int pageNo)
         {
             var list = new List<ShapeInfo>();
 
@@ -296,14 +297,47 @@ namespace CDRPhotoMatchPro.Core
                 try
                 {
                     dynamic shape = page.Shapes[i];
+                    string rejectReason;
 
-                    if (!IsUsableShape(shape))
+                    if (!IsUsableShape(shape, out rejectReason))
+                    {
+                        Log(
+                            "SHAPE REJECT page=" + pageNo +
+                            " shape=" + i +
+                            " stage=USABLE" +
+                            " reason=" + rejectReason
+                        );
+
                         continue;
+                    }
 
                     RectangleF box = GetShapeBox(shape);
 
-                    if (!IsUsefulBox(box))
+                    if (!IsUsefulBox(box, out rejectReason))
+                    {
+                        Log(
+                            "SHAPE REJECT page=" + pageNo +
+                            " shape=" + i +
+                            " stage=BOX" +
+                            " reason=" + rejectReason +
+                            " left=" + box.Left.ToString("0.###") +
+                            " top=" + box.Top.ToString("0.###") +
+                            " width=" + box.Width.ToString("0.###") +
+                            " height=" + box.Height.ToString("0.###")
+                        );
+
                         continue;
+                    }
+
+                    Log(
+                        "SHAPE ACCEPT page=" + pageNo +
+                        " shape=" + i +
+                        " type=" + GetShapeTypeText(shape) +
+                        " left=" + box.Left.ToString("0.###") +
+                        " top=" + box.Top.ToString("0.###") +
+                        " width=" + box.Width.ToString("0.###") +
+                        " height=" + box.Height.ToString("0.###")
+                    );
 
                     list.Add(
                         new ShapeInfo
@@ -313,8 +347,13 @@ namespace CDRPhotoMatchPro.Core
                         }
                     );
                 }
-                catch
+                catch (Exception ex)
                 {
+                    Log(
+                        "SHAPE READ FAILED page=" + pageNo +
+                        " shape=" + i +
+                        " error=" + ex.Message
+                    );
                 }
             }
 
@@ -667,40 +706,69 @@ namespace CDRPhotoMatchPro.Core
             return any;
         }
 
-        private bool IsUsableShape(dynamic shape)
+        private bool IsUsableShape(
+            dynamic shape,
+            out string rejectReason)
         {
+            rejectReason = "";
+
             try
             {
                 int type = Convert.ToInt32(shape.Type);
 
-                // Guideline
+                // CorelDRAW guideline
                 if (type == 6)
+                {
+                    rejectReason = "GUIDELINE type=6";
                     return false;
+                }
             }
-            catch
+            catch (Exception ex)
             {
+                // Type read fail hone par shape ko reject nahi karte.
+                Log("SHAPE TYPE READ WARNING: " + ex.Message);
             }
 
             try
             {
-                bool visible =
-                    Convert.ToBoolean(shape.Visible);
+                bool visible = Convert.ToBoolean(shape.Visible);
 
                 if (!visible)
+                {
+                    rejectReason = "HIDDEN visible=false";
                     return false;
+                }
             }
-            catch
+            catch (Exception ex)
             {
+                // Visible property unavailable ho to shape ko reject nahi karte.
+                Log("SHAPE VISIBLE READ WARNING: " + ex.Message);
             }
 
             return true;
         }
 
-        private bool IsUsefulBox(RectangleF box)
+        private bool IsUsefulBox(
+            RectangleF box,
+            out string rejectReason)
         {
-            if (box.Width < 0.5f ||
-                box.Height < 0.5f)
+            rejectReason = "";
+
+            if (box.Width < 0.5f)
             {
+                rejectReason =
+                    "WIDTH_TOO_SMALL width=" +
+                    box.Width.ToString("0.###");
+
+                return false;
+            }
+
+            if (box.Height < 0.5f)
+            {
+                rejectReason =
+                    "HEIGHT_TOO_SMALL height=" +
+                    box.Height.ToString("0.###");
+
                 return false;
             }
 
@@ -708,16 +776,49 @@ namespace CDRPhotoMatchPro.Core
                 box.Width /
                 Math.Max(0.001f, box.Height);
 
-            if (ratio > 12f || ratio < 0.08f)
+            if (ratio > 12f)
+            {
+                rejectReason =
+                    "RATIO_TOO_WIDE ratio=" +
+                    ratio.ToString("0.###");
+
                 return false;
+            }
+
+            if (ratio < 0.08f)
+            {
+                rejectReason =
+                    "RATIO_TOO_TALL ratio=" +
+                    ratio.ToString("0.###");
+
+                return false;
+            }
 
             float area =
                 box.Width * box.Height;
 
             if (area < 0.5f)
+            {
+                rejectReason =
+                    "AREA_TOO_SMALL area=" +
+                    area.ToString("0.###");
+
                 return false;
+            }
 
             return true;
+        }
+
+        private string GetShapeTypeText(dynamic shape)
+        {
+            try
+            {
+                return Convert.ToString(shape.Type);
+            }
+            catch
+            {
+                return "unknown";
+            }
         }
 
         private bool IsUsefulExport(string imagePath)
