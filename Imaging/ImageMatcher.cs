@@ -1950,6 +1950,21 @@ namespace CDRPhotoMatchPro.Imaging
             }
         }
 
+
+        private static int Hamming(
+            ulong value)
+        {
+            int count = 0;
+
+            while (value != 0)
+            {
+                value &= value - 1;
+                count++;
+            }
+
+            return count;
+        }
+
         private static double NormalizedDifference(
             double first,
             double second)
