@@ -272,6 +272,11 @@ namespace CDRPhotoMatchPro.Imaging
                     DirectRoute
                 );
 
+            /*
+             * Customer crop/direct structure ko CDR clean line-art
+             * se compare karna useful hai.
+             */
+
             double directToCleanScore =
                 CompareRoute(
                     query,
@@ -288,167 +293,103 @@ namespace CDRPhotoMatchPro.Imaging
                     DirectRoute
                 );
 
-            /*
-             * Purane code me Math.Max route ko bahut importance mil rahi thi.
-             * Isse ek accidental silhouette match poori ranking ko upar le jaata tha.
-             *
-             * Ab:
-             * - same-route agreement sabse important
-             * - cross-route sirf support evidence
-             * - ek route high aur baaki weak ho to strong penalty
-             */
-
-            double sameRouteAverage =
-                (cleanScore + directScore) / 2.0;
-
-            double sameRouteMinimum =
-                Math.Min(cleanScore, directScore);
-
-            double crossAverage =
-                (
-                    directToCleanScore +
-                    cleanToDirectScore
-                ) / 2.0;
-
-            double crossMinimum =
-                Math.Min(
+            double bestCrossScore =
+                Math.Max(
                     directToCleanScore,
                     cleanToDirectScore
                 );
 
-            double bestRoute =
-                Maximum(
+            double bestMainScore =
+                Math.Max(
                     cleanScore,
-                    directScore,
-                    directToCleanScore,
-                    cleanToDirectScore
+                    directScore
                 );
+
+            double secondMainScore =
+                Math.Min(
+                    cleanScore,
+                    directScore
+                );
+
+            /*
+             * Clean route sabse important.
+             * Direct route blur fallback.
+             */
 
             double finalScore =
-                sameRouteAverage * 0.48 +
-                sameRouteMinimum * 0.24 +
-                crossAverage * 0.18 +
-                crossMinimum * 0.10;
+                cleanScore * 0.43 +
+                bestMainScore * 0.27 +
+                bestCrossScore * 0.20 +
+                secondMainScore * 0.10;
+
+            int strongRoutes = 0;
+
+            if (cleanScore >= 74)
+                strongRoutes++;
+
+            if (directScore >= 72)
+                strongRoutes++;
+
+            if (directToCleanScore >= 70)
+                strongRoutes++;
+
+            if (cleanToDirectScore >= 70)
+                strongRoutes++;
 
             /*
-             * False-positive killer:
-             * sirf ek route high ho aur baaki agree na karein.
+             * Multiple routes agree karein to boost.
              */
 
-            int routesAbove55 = 0;
-            int routesAbove65 = 0;
-            int routesBelow30 = 0;
-
-            CountRoute(cleanScore,
-                ref routesAbove55,
-                ref routesAbove65,
-                ref routesBelow30);
-
-            CountRoute(directScore,
-                ref routesAbove55,
-                ref routesAbove65,
-                ref routesBelow30);
-
-            CountRoute(directToCleanScore,
-                ref routesAbove55,
-                ref routesAbove65,
-                ref routesBelow30);
-
-            CountRoute(cleanToDirectScore,
-                ref routesAbove55,
-                ref routesAbove65,
-                ref routesBelow30);
-
-            if (routesAbove55 == 0)
+            if (cleanScore >= 72 &&
+                bestCrossScore >= 66)
             {
-                finalScore *= 0.42;
-            }
-            else if (routesAbove55 == 1)
-            {
-                finalScore *= 0.62;
-            }
-            else if (routesAbove55 == 2)
-            {
-                finalScore *= 0.80;
+                finalScore += 2.5;
             }
 
-            if (routesBelow30 >= 3)
+            if (cleanScore >= 82 &&
+                directScore >= 72 &&
+                bestCrossScore >= 74)
             {
-                finalScore *= 0.58;
-            }
-            else if (routesBelow30 == 2)
-            {
-                finalScore *= 0.74;
-            }
-
-            double routeSpread =
-                bestRoute -
-                Minimum(
-                    cleanScore,
-                    directScore,
-                    directToCleanScore,
-                    cleanToDirectScore
-                );
-
-            if (routeSpread > 46)
-            {
-                finalScore *= 0.58;
-            }
-            else if (routeSpread > 34)
-            {
-                finalScore *= 0.73;
-            }
-            else if (routeSpread > 24)
-            {
-                finalScore *= 0.86;
+                finalScore += 3.5;
             }
 
             /*
-             * Same-route evidence weak ho to customer photo aur
-             * CDR silhouette ko galat match hone se roko.
+             * Sirf ek route accidentally high ho to penalty.
              */
 
-            if (sameRouteMinimum < 22)
+            if (bestMainScore >= 78 &&
+                secondMainScore < 38 &&
+                bestCrossScore < 46)
             {
-                finalScore *= 0.55;
+                finalScore *= 0.77;
             }
-            else if (sameRouteMinimum < 34)
+            else if (bestMainScore >= 68 &&
+                     secondMainScore < 32 &&
+                     bestCrossScore < 42)
             {
-                finalScore *= 0.72;
-            }
-            else if (sameRouteMinimum < 46)
-            {
-                finalScore *= 0.88;
+                finalScore *= 0.84;
             }
 
             /*
-             * High percentage sirf consistent multi-route match ko.
+             * 90%+ sirf strong multi-route evidence par.
              */
 
-            if (routesAbove65 < 2 &&
-                finalScore > 62)
+            if (strongRoutes < 2 &&
+                finalScore > 78)
             {
-                finalScore = 62;
+                finalScore = 78;
             }
 
-            if (routesAbove65 < 3 &&
-                finalScore > 76)
-            {
-                finalScore = 76;
-            }
-
-            if (routesAbove65 < 4 &&
+            if (strongRoutes < 3 &&
                 finalScore > 88)
             {
                 finalScore = 88;
             }
 
-            if (cleanScore >= 80 &&
-                directScore >= 72 &&
-                crossAverage >= 68 &&
-                routeSpread <= 20)
+            if (strongRoutes < 4 &&
+                finalScore > 94)
             {
-                finalScore += 3.0;
+                finalScore = 94;
             }
 
             return Math.Round(
@@ -572,10 +513,10 @@ namespace CDRPhotoMatchPro.Imaging
                 ) / 2.0;
 
             double finalScore =
-                fullScore * 0.30 +
-                centerScore * 0.34 +
+                fullScore * 0.38 +
+                centerScore * 0.29 +
                 sideScore * 0.18 +
-                verticalScore * 0.18;
+                verticalScore * 0.15;
 
             int strongParts = 0;
             int mediumParts = 0;
@@ -647,34 +588,34 @@ namespace CDRPhotoMatchPro.Imaging
              * Main silhouette weak ho to random ornamental design reject.
              */
 
-            if (fullScore < 34)
+            if (fullScore < 30)
             {
-                finalScore *= 0.40;
+                finalScore *= 0.52;
             }
-            else if (fullScore < 46)
+            else if (fullScore < 41)
             {
-                finalScore *= 0.62;
+                finalScore *= 0.69;
             }
-            else if (fullScore < 58)
+            else if (fullScore < 53)
             {
-                finalScore *= 0.80;
+                finalScore *= 0.85;
             }
 
             /*
              * Center design identity.
              */
 
-            if (centerScore < 34)
+            if (centerScore < 29)
             {
-                finalScore *= 0.38;
+                finalScore *= 0.54;
             }
-            else if (centerScore < 47)
+            else if (centerScore < 40)
             {
-                finalScore *= 0.60;
+                finalScore *= 0.70;
             }
-            else if (centerScore < 60)
+            else if (centerScore < 52)
             {
-                finalScore *= 0.79;
+                finalScore *= 0.86;
             }
 
             /*
@@ -964,88 +905,11 @@ namespace CDRPhotoMatchPro.Imaging
 
             if (centerDistance > 0.36)
             {
-                score *= 0.72;
+                score *= 0.78;
             }
             else if (centerDistance > 0.24)
             {
-                score *= 0.85;
-            }
-
-            /*
-             * Internal-detail disagreement:
-             * bold silhouette aur detailed pendant ka occupancy kabhi-kabhi
-             * similar hota hai, lekin edge/radial/projection agree nahi karte.
-             */
-
-            double occupancySimilarity =
-                1.0 -
-                Hamming(
-                    first.Hash ^
-                    second.Hash
-                ) / 64.0;
-
-            double edgeHashSimilarity =
-                1.0 -
-                Hamming(
-                    first.EdgeHash ^
-                    second.EdgeHash
-                ) / 64.0;
-
-            double horizontalSimilarity =
-                1.0 -
-                Hamming(
-                    first.HorizontalHash ^
-                    second.HorizontalHash
-                ) / 64.0;
-
-            double verticalSimilarity =
-                1.0 -
-                Hamming(
-                    first.VerticalHash ^
-                    second.VerticalHash
-                ) / 64.0;
-
-            double radialSimilarity =
-                1.0 -
-                Hamming(
-                    first.RadialHash ^
-                    second.RadialHash
-                ) / 64.0;
-
-            int structuralAgreements = 0;
-
-            if (occupancySimilarity >= 0.66)
-                structuralAgreements++;
-
-            if (edgeHashSimilarity >= 0.64)
-                structuralAgreements++;
-
-            if (horizontalSimilarity >= 0.64)
-                structuralAgreements++;
-
-            if (verticalSimilarity >= 0.64)
-                structuralAgreements++;
-
-            if (radialSimilarity >= 0.64)
-                structuralAgreements++;
-
-            if (structuralAgreements <= 1)
-            {
-                score *= 0.42;
-            }
-            else if (structuralAgreements == 2)
-            {
-                score *= 0.62;
-            }
-            else if (structuralAgreements == 3)
-            {
-                score *= 0.82;
-            }
-
-            if (occupancySimilarity >= 0.72 &&
-                edgeHashSimilarity < 0.48)
-            {
-                score *= 0.58;
+                score *= 0.89;
             }
 
             return Clamp(
@@ -1894,22 +1758,6 @@ namespace CDRPhotoMatchPro.Imaging
             );
         }
 
-        private static void CountRoute(
-            double score,
-            ref int routesAbove55,
-            ref int routesAbove65,
-            ref int routesBelow30)
-        {
-            if (score >= 55)
-                routesAbove55++;
-
-            if (score >= 65)
-                routesAbove65++;
-
-            if (score < 30)
-                routesBelow30++;
-        }
-
         private static void CountPart(
             double score,
             ref int strongParts,
@@ -1948,21 +1796,6 @@ namespace CDRPhotoMatchPro.Imaging
                 {
                 }
             }
-        }
-
-
-        private static int Hamming(
-            ulong value)
-        {
-            int count = 0;
-
-            while (value != 0)
-            {
-                value &= value - 1;
-                count++;
-            }
-
-            return count;
         }
 
         private static double NormalizedDifference(
