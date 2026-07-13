@@ -93,6 +93,7 @@ namespace CDRPhotoMatchPro.UI
 
         private Bitmap selectedCropBitmap;
         private string selectedCropSourcePath;
+        private bool searchInProgress;
 
         public MainForm()
         {
@@ -849,6 +850,11 @@ namespace CDRPhotoMatchPro.UI
 
         private void SearchImage()
         {
+            if (searchInProgress)
+                return;
+
+            searchInProgress = true;
+
             if (searchButton != null)
                 searchButton.Enabled = false;
 
@@ -877,6 +883,9 @@ namespace CDRPhotoMatchPro.UI
                 manualCropUsed
                     ? "Searching selected jewellery crop..."
                     : "No manual crop. Searching original JPG fallback...";
+
+            grid.DataSource = null;
+            ClearPicture(resultPreview);
 
             Application.DoEvents();
 
@@ -996,6 +1005,29 @@ namespace CDRPhotoMatchPro.UI
                         item =>
                             item.ShapeCount
                     )
+                    .ThenBy(
+                        item =>
+                            item.CdrPath ?? "",
+                        StringComparer.OrdinalIgnoreCase
+                    )
+                    .ThenBy(
+                        item =>
+                            item.PageNumber
+                    )
+                    .ThenBy(
+                        item =>
+                            item.DesignNumber
+                    )
+                    .ThenBy(
+                        item =>
+                            item.ExportMode ?? "",
+                        StringComparer.OrdinalIgnoreCase
+                    )
+                    .ThenBy(
+                        item =>
+                            item.PngPath ?? "",
+                        StringComparer.OrdinalIgnoreCase
+                    )
                     .Take(100)
                     .ToList();
 
@@ -1043,6 +1075,8 @@ namespace CDRPhotoMatchPro.UI
             }
             finally
             {
+                searchInProgress = false;
+
                 if (searchButton != null)
                     searchButton.Enabled = true;
             }
