@@ -272,11 +272,6 @@ namespace CDRPhotoMatchPro.Imaging
                     DirectRoute
                 );
 
-            /*
-             * Customer crop/direct structure ko CDR clean line-art
-             * se compare karna useful hai.
-             */
-
             double directToCleanScore =
                 CompareRoute(
                     query,
@@ -293,103 +288,154 @@ namespace CDRPhotoMatchPro.Imaging
                     DirectRoute
                 );
 
-            double bestCrossScore =
-                Math.Max(
+            double sameRouteAverage =
+                (
+                    cleanScore +
+                    directScore
+                ) / 2.0;
+
+            double crossRouteAverage =
+                (
+                    directToCleanScore +
+                    cleanToDirectScore
+                ) / 2.0;
+
+            double bestRoute =
+                Maximum(
+                    cleanScore,
+                    directScore,
                     directToCleanScore,
                     cleanToDirectScore
                 );
 
-            double bestMainScore =
-                Math.Max(
+            double secondBestRoute =
+                SecondLargest(
                     cleanScore,
-                    directScore
-                );
-
-            double secondMainScore =
-                Math.Min(
-                    cleanScore,
-                    directScore
+                    directScore,
+                    directToCleanScore,
+                    cleanToDirectScore
                 );
 
             /*
-             * Clean route sabse important.
-             * Direct route blur fallback.
+             * Ek accidental route ko poori ranking dominate nahi karne dena.
+             * Best route important hai, lekin second-best agreement bhi zaroori hai.
              */
 
             double finalScore =
-                cleanScore * 0.43 +
-                bestMainScore * 0.27 +
-                bestCrossScore * 0.20 +
-                secondMainScore * 0.10;
+                sameRouteAverage * 0.42 +
+                crossRouteAverage * 0.26 +
+                bestRoute * 0.20 +
+                secondBestRoute * 0.12;
 
             int strongRoutes = 0;
+            int mediumRoutes = 0;
+            int weakRoutes = 0;
 
-            if (cleanScore >= 74)
-                strongRoutes++;
+            CountRoute(
+                cleanScore,
+                ref strongRoutes,
+                ref mediumRoutes,
+                ref weakRoutes
+            );
 
-            if (directScore >= 72)
-                strongRoutes++;
+            CountRoute(
+                directScore,
+                ref strongRoutes,
+                ref mediumRoutes,
+                ref weakRoutes
+            );
 
-            if (directToCleanScore >= 70)
-                strongRoutes++;
+            CountRoute(
+                directToCleanScore,
+                ref strongRoutes,
+                ref mediumRoutes,
+                ref weakRoutes
+            );
 
-            if (cleanToDirectScore >= 70)
-                strongRoutes++;
+            CountRoute(
+                cleanToDirectScore,
+                ref strongRoutes,
+                ref mediumRoutes,
+                ref weakRoutes
+            );
 
-            /*
-             * Multiple routes agree karein to boost.
-             */
+            double routeSpread =
+                bestRoute -
+                Minimum(
+                    cleanScore,
+                    directScore,
+                    directToCleanScore,
+                    cleanToDirectScore
+                );
 
-            if (cleanScore >= 72 &&
-                bestCrossScore >= 66)
+            if (strongRoutes == 0)
             {
-                finalScore += 2.5;
+                finalScore *= 0.60;
+            }
+            else if (strongRoutes == 1)
+            {
+                finalScore *= 0.78;
             }
 
-            if (cleanScore >= 82 &&
-                directScore >= 72 &&
-                bestCrossScore >= 74)
+            if (mediumRoutes <= 1)
             {
-                finalScore += 3.5;
+                finalScore *= 0.76;
+            }
+            else if (mediumRoutes == 2)
+            {
+                finalScore *= 0.90;
             }
 
-            /*
-             * Sirf ek route accidentally high ho to penalty.
-             */
-
-            if (bestMainScore >= 78 &&
-                secondMainScore < 38 &&
-                bestCrossScore < 46)
+            if (weakRoutes >= 3)
             {
-                finalScore *= 0.77;
+                finalScore *= 0.70;
             }
-            else if (bestMainScore >= 68 &&
-                     secondMainScore < 32 &&
-                     bestCrossScore < 42)
+            else if (weakRoutes == 2)
             {
                 finalScore *= 0.84;
             }
 
+            if (routeSpread > 44)
+            {
+                finalScore *= 0.70;
+            }
+            else if (routeSpread > 32)
+            {
+                finalScore *= 0.82;
+            }
+            else if (routeSpread > 22)
+            {
+                finalScore *= 0.92;
+            }
+
             /*
-             * 90%+ sirf strong multi-route evidence par.
+             * High score sirf multi-route agreement par.
              */
 
             if (strongRoutes < 2 &&
+                finalScore > 64)
+            {
+                finalScore = 64;
+            }
+
+            if (strongRoutes < 3 &&
                 finalScore > 78)
             {
                 finalScore = 78;
             }
 
-            if (strongRoutes < 3 &&
-                finalScore > 88)
+            if (strongRoutes < 4 &&
+                finalScore > 90)
             {
-                finalScore = 88;
+                finalScore = 90;
             }
 
-            if (strongRoutes < 4 &&
-                finalScore > 94)
+            if (cleanScore >= 82 &&
+                directScore >= 72 &&
+                crossRouteAverage >= 68 &&
+                routeSpread <= 18)
             {
-                finalScore = 94;
+                finalScore += 3.0;
             }
 
             return Math.Round(
@@ -513,10 +559,10 @@ namespace CDRPhotoMatchPro.Imaging
                 ) / 2.0;
 
             double finalScore =
-                fullScore * 0.38 +
-                centerScore * 0.29 +
-                sideScore * 0.18 +
-                verticalScore * 0.15;
+                fullScore * 0.34 +
+                centerScore * 0.32 +
+                sideScore * 0.16 +
+                verticalScore * 0.18;
 
             int strongParts = 0;
             int mediumParts = 0;
@@ -590,32 +636,32 @@ namespace CDRPhotoMatchPro.Imaging
 
             if (fullScore < 30)
             {
-                finalScore *= 0.52;
+                finalScore *= 0.48;
             }
-            else if (fullScore < 41)
+            else if (fullScore < 43)
             {
-                finalScore *= 0.69;
+                finalScore *= 0.66;
             }
-            else if (fullScore < 53)
+            else if (fullScore < 55)
             {
-                finalScore *= 0.85;
+                finalScore *= 0.83;
             }
 
             /*
              * Center design identity.
              */
 
-            if (centerScore < 29)
+            if (centerScore < 30)
             {
-                finalScore *= 0.54;
+                finalScore *= 0.48;
             }
-            else if (centerScore < 40)
+            else if (centerScore < 43)
             {
-                finalScore *= 0.70;
+                finalScore *= 0.66;
             }
-            else if (centerScore < 52)
+            else if (centerScore < 56)
             {
-                finalScore *= 0.86;
+                finalScore *= 0.83;
             }
 
             /*
@@ -1756,6 +1802,41 @@ namespace CDRPhotoMatchPro.Imaging
                 256,
                 256
             );
+        }
+
+        private static void CountRoute(
+            double score,
+            ref int strongRoutes,
+            ref int mediumRoutes,
+            ref int weakRoutes)
+        {
+            if (score >= 72)
+                strongRoutes++;
+
+            if (score >= 56)
+                mediumRoutes++;
+
+            if (score < 34)
+                weakRoutes++;
+        }
+
+        private static double SecondLargest(
+            double first,
+            double second,
+            double third,
+            double fourth)
+        {
+            double[] values =
+            {
+                first,
+                second,
+                third,
+                fourth
+            };
+
+            Array.Sort(values);
+
+            return values[2];
         }
 
         private static void CountPart(
