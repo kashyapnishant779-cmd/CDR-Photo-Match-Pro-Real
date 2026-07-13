@@ -213,116 +213,34 @@ namespace CDRPhotoMatchPro.Imaging
             ImageFingerprint first,
             ImageFingerprint second)
         {
-            double occupancyScore = HashSimilarity(
-                first.Hash,
-                second.Hash
-            );
-
-            double edgeHashScore = HashSimilarity(
-                first.EdgeHash,
-                second.EdgeHash
-            );
-
-            double horizontalScore = HashSimilarity(
-                first.HorizontalHash,
-                second.HorizontalHash
-            );
-
-            double verticalScore = HashSimilarity(
-                first.VerticalHash,
-                second.VerticalHash
-            );
-
-            double radialScore = HashSimilarity(
-                first.RadialHash,
-                second.RadialHash
-            );
-
-            double darkScore = SimilarityFromDifference(
-                Math.Abs(
-                    first.DarkRatio -
-                    second.DarkRatio
-                ),
-                0.32
-            );
-
-            double edgeRatioScore = SimilarityFromDifference(
-                Math.Abs(
-                    first.EdgeRatio -
-                    second.EdgeRatio
-                ),
-                0.22
-            );
-
-            double aspectScore = RatioSimilarity(
-                first.AspectRatio,
-                second.AspectRatio
-            );
-
-            double centroidDifference =
-                Distance(
-                    first.CenterX,
-                    first.CenterY,
-                    second.CenterX,
-                    second.CenterY
+            double occupancyScore =
+                HashSimilarity(
+                    first.Hash,
+                    second.Hash
                 );
 
-            double centroidScore =
-                SimilarityFromDifference(
-                    centroidDifference,
-                    0.24
-                );
-
-            double borderScore =
-                SimilarityFromDifference(
-                    Math.Abs(
-                        first.BorderRatio -
-                        second.BorderRatio
-                    ),
-                    0.30
-                );
-
-            double symmetryScore =
-                SimilarityFromDifference(
-                    Math.Abs(
-                        first.Symmetry -
-                        second.Symmetry
-                    ),
-                    0.34
-                );
-
-            double score =
-                occupancyScore * 0.20 +
-                edgeHashScore * 0.17 +
-                horizontalScore * 0.12 +
-                verticalScore * 0.12 +
-                radialScore * 0.14 +
-                darkScore * 0.06 +
-                edgeRatioScore * 0.06 +
-                aspectScore * 0.06 +
-                centroidScore * 0.025 +
-                borderScore * 0.025 +
-                symmetryScore * 0.02;
-
-            int occupancyDistance =
-                Hamming(first.Hash ^ second.Hash);
-
-            int edgeDistance =
-                Hamming(
-                    first.EdgeHash ^
+            double edgeHashScore =
+                HashSimilarity(
+                    first.EdgeHash,
                     second.EdgeHash
                 );
 
-            int radialDistance =
-                Hamming(
-                    first.RadialHash ^
-                    second.RadialHash
+            double horizontalScore =
+                HashSimilarity(
+                    first.HorizontalHash,
+                    second.HorizontalHash
                 );
 
-            double aspectDifference =
-                NormalizedRatioDifference(
-                    first.AspectRatio,
-                    second.AspectRatio
+            double verticalScore =
+                HashSimilarity(
+                    first.VerticalHash,
+                    second.VerticalHash
+                );
+
+            double radialScore =
+                HashSimilarity(
+                    first.RadialHash,
+                    second.RadialHash
                 );
 
             double darkDifference =
@@ -337,62 +255,283 @@ namespace CDRPhotoMatchPro.Imaging
                     second.EdgeRatio
                 );
 
-            // Completely different silhouettes ko high score nahi milega.
-            if (occupancyDistance > 31)
-                score *= 0.76;
+            double aspectDifference =
+                NormalizedRatioDifference(
+                    first.AspectRatio,
+                    second.AspectRatio
+                );
 
-            if (occupancyDistance > 38)
-                score *= 0.72;
+            double centroidDifference =
+                Distance(
+                    first.CenterX,
+                    first.CenterY,
+                    second.CenterX,
+                    second.CenterY
+                );
 
-            if (edgeDistance > 34)
+            double borderDifference =
+                Math.Abs(
+                    first.BorderRatio -
+                    second.BorderRatio
+                );
+
+            double symmetryDifference =
+                Math.Abs(
+                    first.Symmetry -
+                    second.Symmetry
+                );
+
+            double darkScore =
+                SimilarityFromDifference(
+                    darkDifference,
+                    0.24
+                );
+
+            double edgeRatioScore =
+                SimilarityFromDifference(
+                    edgeDifference,
+                    0.18
+                );
+
+            double aspectScore =
+                RatioSimilarity(
+                    first.AspectRatio,
+                    second.AspectRatio
+                );
+
+            double centroidScore =
+                SimilarityFromDifference(
+                    centroidDifference,
+                    0.20
+                );
+
+            double borderScore =
+                SimilarityFromDifference(
+                    borderDifference,
+                    0.22
+                );
+
+            double symmetryScore =
+                SimilarityFromDifference(
+                    symmetryDifference,
+                    0.28
+                );
+
+            /*
+             * Fine jewellery detail ke liye edge/projection/radial
+             * occupancy se zyada important rakhe gaye hain.
+             */
+
+            double score =
+                occupancyScore * 0.12 +
+                edgeHashScore * 0.24 +
+                horizontalScore * 0.14 +
+                verticalScore * 0.14 +
+                radialScore * 0.18 +
+                darkScore * 0.035 +
+                edgeRatioScore * 0.065 +
+                aspectScore * 0.045 +
+                centroidScore * 0.015 +
+                borderScore * 0.02 +
+                symmetryScore * 0.01;
+
+            int occupancyDistance =
+                Hamming(
+                    first.Hash ^
+                    second.Hash
+                );
+
+            int edgeDistance =
+                Hamming(
+                    first.EdgeHash ^
+                    second.EdgeHash
+                );
+
+            int horizontalDistance =
+                Hamming(
+                    first.HorizontalHash ^
+                    second.HorizontalHash
+                );
+
+            int verticalDistance =
+                Hamming(
+                    first.VerticalHash ^
+                    second.VerticalHash
+                );
+
+            int radialDistance =
+                Hamming(
+                    first.RadialHash ^
+                    second.RadialHash
+                );
+
+            /*
+             * Independent structural agreements.
+             * Ek-do accidental hashes se high score nahi milega.
+             */
+
+            int strong = 0;
+            int medium = 0;
+            int weak = 0;
+
+            CountSignature(
+                occupancyScore,
+                ref strong,
+                ref medium,
+                ref weak
+            );
+
+            CountSignature(
+                edgeHashScore,
+                ref strong,
+                ref medium,
+                ref weak
+            );
+
+            CountSignature(
+                horizontalScore,
+                ref strong,
+                ref medium,
+                ref weak
+            );
+
+            CountSignature(
+                verticalScore,
+                ref strong,
+                ref medium,
+                ref weak
+            );
+
+            CountSignature(
+                radialScore,
+                ref strong,
+                ref medium,
+                ref weak
+            );
+
+            if (edgeDistance > 38)
+                score *= 0.42;
+            else if (edgeDistance > 31)
+                score *= 0.60;
+            else if (edgeDistance > 25)
                 score *= 0.78;
 
-            if (radialDistance > 35)
-                score *= 0.80;
+            if (radialDistance > 38)
+                score *= 0.48;
+            else if (radialDistance > 31)
+                score *= 0.66;
+            else if (radialDistance > 25)
+                score *= 0.82;
 
-            if (aspectDifference > 0.38)
-                score *= 0.72;
-            else if (aspectDifference > 0.24)
-                score *= 0.84;
-
-            if (darkDifference > 0.25)
-                score *= 0.76;
-            else if (darkDifference > 0.17)
-                score *= 0.88;
-
-            if (edgeDifference > 0.18)
-                score *= 0.78;
-            else if (edgeDifference > 0.12)
-                score *= 0.89;
-
-            // 90%+ sirf tab mile jab multiple independent signatures match hon.
-            int veryStrongSignatures = 0;
-
-            if (occupancyScore >= 0.84)
-                veryStrongSignatures++;
-
-            if (edgeHashScore >= 0.82)
-                veryStrongSignatures++;
-
-            if (horizontalScore >= 0.82)
-                veryStrongSignatures++;
-
-            if (verticalScore >= 0.82)
-                veryStrongSignatures++;
-
-            if (radialScore >= 0.82)
-                veryStrongSignatures++;
-
-            if (score > 0.90 &&
-                veryStrongSignatures < 4)
+            if (horizontalDistance > 38 &&
+                verticalDistance > 38)
             {
-                score = 0.90;
+                score *= 0.44;
+            }
+            else if (horizontalDistance > 31 &&
+                     verticalDistance > 31)
+            {
+                score *= 0.64;
             }
 
-            if (score > 0.84 &&
-                veryStrongSignatures < 3)
+            if (occupancyDistance > 42)
+                score *= 0.58;
+            else if (occupancyDistance > 35)
+                score *= 0.74;
+
+            if (aspectDifference > 0.46)
+                score *= 0.48;
+            else if (aspectDifference > 0.32)
+                score *= 0.67;
+            else if (aspectDifference > 0.20)
+                score *= 0.84;
+
+            if (darkDifference > 0.24)
+                score *= 0.54;
+            else if (darkDifference > 0.16)
+                score *= 0.72;
+
+            if (edgeDifference > 0.16)
+                score *= 0.50;
+            else if (edgeDifference > 0.11)
+                score *= 0.70;
+
+            if (borderDifference > 0.28)
+                score *= 0.66;
+
+            if (centroidDifference > 0.28)
+                score *= 0.70;
+
+            /*
+             * Bold solid silhouette vs detailed open jewellery:
+             * occupancy thoda similar ho sakta hai, lekin edge/radial
+             * structure agree nahi karta.
+             */
+
+            if (occupancyScore >= 0.66 &&
+                edgeHashScore < 0.48)
             {
-                score = 0.84;
+                score *= 0.46;
+            }
+
+            if (occupancyScore >= 0.66 &&
+                radialScore < 0.48)
+            {
+                score *= 0.52;
+            }
+
+            if (strong == 0)
+            {
+                score *= 0.34;
+            }
+            else if (strong == 1)
+            {
+                score *= 0.52;
+            }
+            else if (strong == 2)
+            {
+                score *= 0.72;
+            }
+
+            if (medium <= 1)
+                score *= 0.55;
+            else if (medium == 2)
+                score *= 0.74;
+
+            if (weak >= 3)
+                score *= 0.58;
+            else if (weak == 2)
+                score *= 0.76;
+
+            /*
+             * High score caps.
+             */
+
+            if (strong < 2 &&
+                score > 0.48)
+            {
+                score = 0.48;
+            }
+
+            if (strong < 3 &&
+                score > 0.64)
+            {
+                score = 0.64;
+            }
+
+            if (strong < 4 &&
+                score > 0.78)
+            {
+                score = 0.78;
+            }
+
+            if (strong >= 4 &&
+                weak == 0 &&
+                edgeHashScore >= 0.78 &&
+                radialScore >= 0.76 &&
+                aspectScore >= 0.78)
+            {
+                score += 0.04;
             }
 
             score = Clamp01(score);
@@ -1595,6 +1734,22 @@ namespace CDRPhotoMatchPro.Imaging
 
             return truePixels /
                    (double)totalPixels;
+        }
+
+        private static void CountSignature(
+            double score,
+            ref int strong,
+            ref int medium,
+            ref int weak)
+        {
+            if (score >= 0.76)
+                strong++;
+
+            if (score >= 0.62)
+                medium++;
+
+            if (score < 0.48)
+                weak++;
         }
 
         private static double HashSimilarity(
