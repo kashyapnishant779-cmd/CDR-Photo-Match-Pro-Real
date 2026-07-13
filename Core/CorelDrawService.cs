@@ -74,6 +74,11 @@ namespace CDRPhotoMatchPro.Core
 
                     Log("USABLE-SHAPES=" + usable.Count);
 
+                    List<List<int>> detailClusters =
+                        CollectSmallDetailClusters(page, shapeCount, pageNo);
+
+                    Log("SMALL-DETAIL-CLUSTERS=" + detailClusters.Count);
+
                     List<List<int>> groups =
                         BuildSmartGroups(usable);
 
@@ -81,6 +86,98 @@ namespace CDRPhotoMatchPro.Core
 
                     int designNo = 1;
                     var groupedIndexes = new HashSet<int>();
+
+                    // Detailed jewellery made from many very small nearby parts.
+                    // Earlier these parts were rejected one-by-one by the size filter,
+                    // so the complete design disappeared from the index.
+                    for (int detailNo = 0;
+                         detailNo < detailClusters.Count;
+                         detailNo++)
+                    {
+                        List<int> detailGroup = detailClusters[detailNo];
+
+                        if (detailGroup == null || detailGroup.Count < 2)
+                            continue;
+
+                        try
+                        {
+                            if (!SelectIndexes(page, detailGroup))
+                                continue;
+
+                            string baseName =
+                                SafeName(
+                                    Path.GetFileNameWithoutExtension(cdrPath)
+                                ) +
+                                "_p" + pageNo +
+                                "_detail" + (detailNo + 1);
+
+                            string pngPath = Path.Combine(
+                                cacheRoot,
+                                baseName + "_HD.png"
+                            );
+
+                            string thumbPath = Path.Combine(
+                                cacheRoot,
+                                baseName + "_thumb.jpg"
+                            );
+
+                            CopyActiveSelection();
+                            Thread.Sleep(250);
+
+                            if (!SaveClipboardArtwork(
+                                    pngPath,
+                                    thumbPath))
+                            {
+                                Log(
+                                    "DETAIL EXPORT FAILED detail=" +
+                                    (detailNo + 1)
+                                );
+
+                                continue;
+                            }
+
+                            if (!IsUsefulExport(pngPath))
+                            {
+                                SafeDelete(pngPath);
+                                SafeDelete(thumbPath);
+
+                                Log(
+                                    "DETAIL REJECTED detail=" +
+                                    (detailNo + 1)
+                                );
+
+                                continue;
+                            }
+
+                            results.Add(
+                                CreateRecord(
+                                    cdrPath,
+                                    thumbPath,
+                                    pngPath,
+                                    pageNo,
+                                    designNo,
+                                    "DETAIL-CLUSTER-HD",
+                                    detailGroup.Count
+                                )
+                            );
+
+                            Log(
+                                "DETAIL OK page=" + pageNo +
+                                " design=" + designNo +
+                                " shapes=" + detailGroup.Count
+                            );
+
+                            designNo++;
+                        }
+                        catch (Exception ex)
+                        {
+                            Log(
+                                "DETAIL FAILED page=" + pageNo +
+                                " detail=" + (detailNo + 1) +
+                                " error=" + ex.Message
+                            );
+                        }
+                    }
 
                     // Complete nearby design groups
                     for (int groupNo = 0;
@@ -358,6 +455,190 @@ namespace CDRPhotoMatchPro.Core
             }
 
             return list;
+        }
+
+        private List<List<int>> CollectSmallDetailClusters(
+            dynamic page,
+            int shapeCount,
+            int pageNo)
+        {
+            var details = new List<ShapeInfo>();
+
+            for (int i = 1; i <= shapeCount; i++)
+            {
+                try
+                {
+                    dynamic shape = page.Shapes[i];
+                    string rejectReason;
+
+                    if (!IsUsableShape(shape, out rejectReason))
+                        continue;
+
+                    RectangleF box = GetShapeBox(shape);
+
+                    // Keep only shapes rejected by the normal box filter.
+                    if (IsUsefulBox(box, out rejectReason))
+                        continue;
+
+                    if (!IsPotentialSmallDetail(box))
+                        continue;
+
+                    details.Add(
+                        new ShapeInfo
+                        {
+                            Index = i,
+                            Box = box
+                        }
+                    );
+                }
+                catch (Exception ex)
+                {
+                    Log(
+                        "DETAIL READ FAILED page=" + pageNo +
+                        " shape=" + i +
+                        " error=" + ex.Message
+                    );
+                }
+            }
+
+            var clusters = new List<List<int>>();
+
+            if (details.Count == 0)
+                return clusters;
+
+            bool[] used = new bool[details.Count];
+
+            for (int i = 0; i < details.Count; i++)
+            {
+                if (used[i])
+                    continue;
+
+                var memberPositions = new List<int>();
+                var queue = new Queue<int>();
+
+                used[i] = true;
+                queue.Enqueue(i);
+
+                while (queue.Count > 0)
+                {
+                    int current = queue.Dequeue();
+                    memberPositions.Add(current);
+
+                    for (int j = 0; j < details.Count; j++)
+                    {
+                        if (used[j])
+                            continue;
+
+                        if (!AreSmallDetailsConnected(
+                                details[current].Box,
+                                details[j].Box))
+                        {
+                            continue;
+                        }
+
+                        used[j] = true;
+                        queue.Enqueue(j);
+                    }
+                }
+
+                if (memberPositions.Count < 2)
+                    continue;
+
+                RectangleF clusterBox =
+                    details[memberPositions[0]].Box;
+
+                var indexes = new List<int>();
+
+                for (int m = 0; m < memberPositions.Count; m++)
+                {
+                    ShapeInfo info = details[memberPositions[m]];
+                    indexes.Add(info.Index);
+                    clusterBox = Union(clusterBox, info.Box);
+                }
+
+                // Ignore microscopic accidental dots. A genuine detailed design
+                // normally forms a visible combined box even when every part is tiny.
+                if (clusterBox.Width < 0.12f ||
+                    clusterBox.Height < 0.12f ||
+                    clusterBox.Width * clusterBox.Height < 0.025f)
+                {
+                    Log(
+                        "DETAIL CLUSTER REJECT page=" + pageNo +
+                        " shapes=" + indexes.Count +
+                        " width=" + clusterBox.Width.ToString("0.###") +
+                        " height=" + clusterBox.Height.ToString("0.###")
+                    );
+
+                    continue;
+                }
+
+                Log(
+                    "DETAIL CLUSTER ACCEPT page=" + pageNo +
+                    " shapes=" + indexes.Count +
+                    " left=" + clusterBox.Left.ToString("0.###") +
+                    " top=" + clusterBox.Top.ToString("0.###") +
+                    " width=" + clusterBox.Width.ToString("0.###") +
+                    " height=" + clusterBox.Height.ToString("0.###")
+                );
+
+                clusters.Add(indexes);
+            }
+
+            return clusters;
+        }
+
+        private bool IsPotentialSmallDetail(RectangleF box)
+        {
+            if (box.Width <= 0.002f || box.Height <= 0.002f)
+                return false;
+
+            if (box.Width > 0.75f || box.Height > 0.75f)
+                return false;
+
+            float ratio =
+                box.Width / Math.Max(0.0001f, box.Height);
+
+            if (ratio > 20f || ratio < 0.05f)
+                return false;
+
+            return true;
+        }
+
+        private bool AreSmallDetailsConnected(
+            RectangleF a,
+            RectangleF b)
+        {
+            RectangleF intersection = RectangleF.Intersect(a, b);
+
+            if (!intersection.IsEmpty)
+                return true;
+
+            float horizontalGap = AxisGap(
+                a.Left,
+                a.Right,
+                b.Left,
+                b.Right
+            );
+
+            float verticalGap = AxisGap(
+                a.Top,
+                a.Bottom,
+                b.Top,
+                b.Bottom
+            );
+
+            float maxSize = Math.Max(
+                Math.Max(a.Width, a.Height),
+                Math.Max(b.Width, b.Height)
+            );
+
+            float allowedGap = Math.Max(
+                0.06f,
+                Math.Min(0.16f, maxSize * 0.60f)
+            );
+
+            return horizontalGap <= allowedGap &&
+                   verticalGap <= allowedGap;
         }
 
         private List<List<int>> BuildSmartGroups(List<ShapeInfo> shapes)
