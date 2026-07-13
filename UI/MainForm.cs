@@ -86,6 +86,7 @@ namespace CDRPhotoMatchPro.UI
 
         private Button selectAreaButton;
         private Button clearAreaButton;
+        private Button searchButton;
         private Button openCdrBtn;
         private Button openFolderBtn;
         private Button copyPathBtn;
@@ -180,7 +181,9 @@ namespace CDRPhotoMatchPro.UI
             {
                 Left = 10,
                 Top = 12,
-                Width = 600
+                Width = 290,
+                Anchor = AnchorStyles.Top |
+                         AnchorStyles.Left
             };
 
             top.Controls.Add(imagePath);
@@ -188,9 +191,11 @@ namespace CDRPhotoMatchPro.UI
             var browse = new Button
             {
                 Text = "Browse Image",
-                Left = 620,
+                Left = 310,
                 Top = 10,
-                Width = 110
+                Width = 95,
+                Anchor = AnchorStyles.Top |
+                         AnchorStyles.Left
             };
 
             browse.Click += delegate
@@ -203,9 +208,11 @@ namespace CDRPhotoMatchPro.UI
             selectAreaButton = new Button
             {
                 Text = "Select Jewellery Area",
-                Left = 740,
+                Left = 415,
                 Top = 10,
-                Width = 155
+                Width = 130,
+                Anchor = AnchorStyles.Top |
+                         AnchorStyles.Left
             };
 
             selectAreaButton.Click += delegate
@@ -218,9 +225,11 @@ namespace CDRPhotoMatchPro.UI
             clearAreaButton = new Button
             {
                 Text = "Clear Crop",
-                Left = 905,
+                Left = 555,
                 Top = 10,
-                Width = 90
+                Width = 65,
+                Anchor = AnchorStyles.Top |
+                         AnchorStyles.Left
             };
 
             clearAreaButton.Click += delegate
@@ -230,27 +239,31 @@ namespace CDRPhotoMatchPro.UI
 
             top.Controls.Add(clearAreaButton);
 
-            var search = new Button
+            searchButton = new Button
             {
                 Text = "Search",
-                Left = 1005,
+                Left = 630,
                 Top = 10,
-                Width = 90
+                Width = 75,
+                Anchor = AnchorStyles.Top |
+                         AnchorStyles.Left
             };
 
-            search.Click += delegate
+            searchButton.Click += delegate
             {
                 SearchImage();
             };
 
-            top.Controls.Add(search);
+            top.Controls.Add(searchButton);
+
+            AcceptButton = searchButton;
 
             top.Controls.Add(
                 new Label
                 {
                     Left = 10,
                     Top = 48,
-                    Width = 1080,
+                    Width = 690,
                     Height = 22,
                     Text =
                         "Best result ke liye Browse Image ke baad Select Jewellery Area dabao aur sirf jewellery ke around box banao."
@@ -465,7 +478,7 @@ namespace CDRPhotoMatchPro.UI
             var start = new Button
             {
                 Text = "Start Incremental Scan",
-                Left = 540,
+                Left = 415,
                 Top = 23,
                 Width = 160
             };
@@ -749,7 +762,16 @@ namespace CDRPhotoMatchPro.UI
                     previewTabs.SelectedIndex = 1;
 
                     status.Text =
-                        "Manual jewellery crop ready. Ab Search dabao.";
+                        "Manual jewellery crop ready. Search automatically start ho rahi hai...";
+
+                    BeginInvoke(
+                        new Action(
+                            delegate
+                            {
+                                SearchImage();
+                            }
+                        )
+                    );
                 }
             }
             catch (Exception ex)
@@ -827,6 +849,11 @@ namespace CDRPhotoMatchPro.UI
 
         private void SearchImage()
         {
+            if (searchButton != null)
+                searchButton.Enabled = false;
+
+            try
+            {
             if (!File.Exists(imagePath.Text))
             {
                 MessageBox.Show(
@@ -1004,7 +1031,21 @@ namespace CDRPhotoMatchPro.UI
                 " | Mode " +
                 top[0].ExportMode;
 
-            previewTabs.SelectedIndex = 1;
+            previewTabs.SelectedIndex = 3;
+            }
+            catch (Exception ex)
+            {
+                status.Text = "Search error";
+                MessageBox.Show(
+                    "Search error:\r\n" +
+                    ex.Message
+                );
+            }
+            finally
+            {
+                if (searchButton != null)
+                    searchButton.Enabled = true;
+            }
         }
 
         private void ShowDiagnosticLineArt(
