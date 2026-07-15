@@ -1,864 +1,340 @@
 using System;
-using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
-using System.IO;
 
 namespace CDRPhotoMatchPro.Imaging
 {
-    public sealed class ImageMatcher
+    public sealed class ImageFingerprint
     {
-        /*
-         * Exact segment order:
-         *
-         * 0 = FULL
-         * 1 = CENTER
-         * 2 = LEFT
-         * 3 = RIGHT
-         * 4 = TOP
-         * 5 = BOTTOM
-         */
+        // Purane ImageMatcher ke saath compatibility ke liye.
+        public ulong Hash { get; set; }
+        public double DarkRatio { get; set; }
+        public double EdgeRatio { get; set; }
 
-        private const int FullPart = 0;
-        private const int CenterPart = 1;
-        private const int LeftPart = 2;
-        private const int RightPart = 3;
-        private const int TopPart = 4;
-        private const int BottomPart = 5;
+        // Naye strong ImageMatcher ke liye additional shape information.
+        public ulong EdgeHash { get; set; }
+        public ulong HorizontalHash { get; set; }
+        public ulong VerticalHash { get; set; }
+        public ulong RadialHash { get; set; }
 
-        private const int MaxParts = 6;
+        public double AspectRatio { get; set; }
+        public double CenterX { get; set; }
+        public double CenterY { get; set; }
+        public double BorderRatio { get; set; }
+        public double Symmetry { get; set; }
 
-        /*
-         * Route 0 = extracted clean line-art
-         * Route 1 = extracted cropped original / blur route
-         */
+        private const int WorkingSize = 128;
+        private const int GridSize = 8;
+        private const int ProjectionBins = 32;
+        private const int RadialBins = 64;
 
-        private const int CleanRoute = 0;
-        private const int DirectRoute = 1;
-        private const int RouteCount = 2;
-
-        /*
-         * Per-part descriptor:
-         *
-         *  0  Hash
-         *  8  EdgeHash
-         * 16  HorizontalHash
-         * 24  VerticalHash
-         * 32  RadialHash
-         *
-         * 40  DarkRatio
-         * 48  EdgeRatio
-         * 56  AspectRatio
-         * 64  CenterX
-         * 72  CenterY
-         * 80  BorderRatio
-         * 88  Symmetry
-         * 96  Segment Weight
-         *
-         * Total = 104 bytes per part
-         */
-
-        private const int PartSize = 104;
-        private const int RouteSize = MaxParts * PartSize;
-        private const int TotalBytes = RouteCount * RouteSize;
-
-        private const int HashOffset = 0;
-        private const int EdgeHashOffset = 8;
-        private const int HorizontalHashOffset = 16;
-        private const int VerticalHashOffset = 24;
-        private const int RadialHashOffset = 32;
-
-        private const int DarkRatioOffset = 40;
-        private const int EdgeRatioOffset = 48;
-        private const int AspectRatioOffset = 56;
-        private const int CenterXOffset = 64;
-        private const int CenterYOffset = 72;
-        private const int BorderRatioOffset = 80;
-        private const int SymmetryOffset = 88;
-        private const int WeightOffset = 96;
-
-        private const int PreparedSize = 256;
-
-        public static double Compare(
-            string queryImagePath,
-            string databaseImagePath)
+        public static ImageFingerprint FromBitmap(Bitmap source)
         {
-            ImageMatcher matcher = new ImageMatcher();
-
-            byte[] query =
-                matcher.ExtractDescriptorBytes(
-                    queryImagePath
-                );
-
-            byte[] candidate =
-                matcher.ExtractDescriptorBytes(
-                    databaseImagePath
-                );
-
-            return matcher.Compare(
-                query,
-                candidate
-            );
-        }
-
-        public static double CompareImages(
-            string queryImagePath,
-            string databaseImagePath)
-        {
-            return Compare(
-                queryImagePath,
-                databaseImagePath
-            );
-        }
-
-        public byte[] ExtractDescriptorBytes(
-            string imagePath)
-        {
-            byte[] descriptor =
-                new byte[TotalBytes];
-
-            if (string.IsNullOrEmpty(imagePath) ||
-                !File.Exists(imagePath))
+            if (source == null ||
+                source.Width <= 0 ||
+                source.Height <= 0)
             {
-                return descriptor;
+                return Empty();
             }
-
-            ImagePreprocessResult processed = null;
-            List<ImageSegment> cleanSegments = null;
-            List<ImageSegment> directSegments = null;
 
             try
             {
-                using (Bitmap original =
-                    new Bitmap(imagePath))
+                using (Bitmap normalized = Normalize(source))
                 {
-                    /*
-                     * Sabse pehle:
-                     *
-                     * background remove
-                     * jewellery detect
-                     * jewellery crop
-                     * silhouette
-                     * line-art
-                     */
+                    int[,] grayValues = ReadGrayValues(normalized);
 
-                    processed =
-                        ImagePreprocessor.Process(
-                            original
-                        );
-
-                    /*
-                     * Clean route:
-                     * Extracted line-art ko directly segment karo.
-                     */
-
-                    if (processed != null &&
-                        processed.LineArt != null)
-                    {
-                        cleanSegments =
-                            BuildPreparedSegments(
-                                processed.LineArt,
-                                true
-                            );
-                    }
-
-                    /*
-                     * Direct route:
-                     * Sirf extracted jewellery crop ko use karo.
-                     * Puri original JPG ko nahi.
-                     */
-
-                    if (processed != null &&
-                        processed.CroppedOriginal != null)
-                    {
-                        directSegments =
-                            BuildPreparedSegments(
-                                processed.CroppedOriginal,
-                                false
-                            );
-                    }
-
-                    /*
-                     * Preprocessor weak/fail ho to old route backup.
-                     */
-
-                    if (!HasUsableSegments(
-                            cleanSegments
-                        ))
-                    {
-                        DisposeSegments(
-                            cleanSegments
-                        );
-
-                        cleanSegments =
-                            ImageSegmenter.Segment(
-                                original
-                            );
-                    }
-
-                    if (!HasUsableSegments(
-                            directSegments
-                        ))
-                    {
-                        DisposeSegments(
-                            directSegments
-                        );
-
-                        directSegments =
-                            BuildPreparedSegments(
-                                original,
-                                false
-                            );
-                    }
-
-                    WriteRoute(
-                        descriptor,
-                        CleanRoute,
-                        cleanSegments
+                    int threshold = CalculateOtsuThreshold(
+                        grayValues,
+                        normalized.Width,
+                        normalized.Height
                     );
 
-                    WriteRoute(
-                        descriptor,
-                        DirectRoute,
-                        directSegments
+                    bool[,] mask = BuildForegroundMask(
+                        grayValues,
+                        normalized.Width,
+                        normalized.Height,
+                        threshold
                     );
+
+                    CleanMask(
+                        mask,
+                        normalized.Width,
+                        normalized.Height
+                    );
+
+                    Rectangle bounds = FindForegroundBounds(
+                        mask,
+                        normalized.Width,
+                        normalized.Height
+                    );
+
+                    if (bounds.Width < 3 ||
+                        bounds.Height < 3)
+                    {
+                        return Empty();
+                    }
+
+                    bool[,] centeredMask = CenterForeground(
+                        mask,
+                        bounds,
+                        WorkingSize,
+                        WorkingSize
+                    );
+
+                    Rectangle centeredBounds =
+                        FindForegroundBounds(
+                            centeredMask,
+                            WorkingSize,
+                            WorkingSize
+                        );
+
+                    if (centeredBounds.Width < 3 ||
+                        centeredBounds.Height < 3)
+                    {
+                        return Empty();
+                    }
+
+                    bool[,] edgeMask = BuildEdgeMask(
+                        centeredMask,
+                        WorkingSize,
+                        WorkingSize
+                    );
+
+                    double darkRatio = CalculateTrueRatio(
+                        centeredMask,
+                        WorkingSize,
+                        WorkingSize
+                    );
+
+                    double edgeRatio = CalculateTrueRatio(
+                        edgeMask,
+                        WorkingSize,
+                        WorkingSize
+                    );
+
+                    PointF centroid = CalculateCentroid(
+                        centeredMask,
+                        WorkingSize,
+                        WorkingSize
+                    );
+
+                    double aspectRatio =
+                        centeredBounds.Height > 0
+                            ? centeredBounds.Width /
+                              (double)centeredBounds.Height
+                            : 1.0;
+
+                    double borderRatio = CalculateBorderRatio(
+                        centeredMask,
+                        centeredBounds
+                    );
+
+                    double symmetry = CalculateSymmetry(
+                        centeredMask,
+                        centeredBounds
+                    );
+
+                    ulong occupancyHash = BuildGridHash(
+                        centeredMask,
+                        WorkingSize,
+                        WorkingSize
+                    );
+
+                    ulong edgeHash = BuildGridHash(
+                        edgeMask,
+                        WorkingSize,
+                        WorkingSize
+                    );
+
+                    ulong horizontalHash =
+                        BuildHorizontalProjectionHash(
+                            centeredMask,
+                            centeredBounds
+                        );
+
+                    ulong verticalHash =
+                        BuildVerticalProjectionHash(
+                            centeredMask,
+                            centeredBounds
+                        );
+
+                    ulong radialHash = BuildRadialHash(
+                        centeredMask,
+                        centeredBounds,
+                        centroid
+                    );
+
+                    return new ImageFingerprint
+                    {
+                        Hash = occupancyHash,
+                        DarkRatio = darkRatio,
+                        EdgeRatio = edgeRatio,
+
+                        EdgeHash = edgeHash,
+                        HorizontalHash = horizontalHash,
+                        VerticalHash = verticalHash,
+                        RadialHash = radialHash,
+
+                        AspectRatio = aspectRatio,
+                        CenterX = centroid.X /
+                                  Math.Max(1.0, WorkingSize - 1.0),
+                        CenterY = centroid.Y /
+                                  Math.Max(1.0, WorkingSize - 1.0),
+                        BorderRatio = borderRatio,
+                        Symmetry = symmetry
+                    };
                 }
             }
             catch
             {
-                return new byte[TotalBytes];
+                return Empty();
             }
-            finally
-            {
-                DisposeSegments(
-                    cleanSegments
-                );
-
-                DisposeSegments(
-                    directSegments
-                );
-
-                if (processed != null)
-                    processed.Dispose();
-            }
-
-            return descriptor;
         }
 
-        public double Compare(
-            byte[] query,
-            byte[] candidate)
+        public static double Compare(
+            ImageFingerprint first,
+            ImageFingerprint second)
         {
-            if (!IsValidDescriptor(query) ||
-                !IsValidDescriptor(candidate))
-            {
+            if (first == null || second == null)
                 return 0;
-            }
 
-            double cleanScore =
-                CompareRoute(
-                    query,
-                    candidate,
-                    CleanRoute,
-                    CleanRoute
-                );
-
-            double directScore =
-                CompareRoute(
-                    query,
-                    candidate,
-                    DirectRoute,
-                    DirectRoute
-                );
-
-            double directToCleanScore =
-                CompareRoute(
-                    query,
-                    candidate,
-                    DirectRoute,
-                    CleanRoute
-                );
-
-            double cleanToDirectScore =
-                CompareRoute(
-                    query,
-                    candidate,
-                    CleanRoute,
-                    DirectRoute
-                );
-
-            double sameRouteAverage =
-                (
-                    cleanScore +
-                    directScore
-                ) / 2.0;
-
-            double crossRouteAverage =
-                (
-                    directToCleanScore +
-                    cleanToDirectScore
-                ) / 2.0;
-
-            double bestRoute =
-                Maximum(
-                    cleanScore,
-                    directScore,
-                    directToCleanScore,
-                    cleanToDirectScore
-                );
-
-            double secondBestRoute =
-                SecondLargest(
-                    cleanScore,
-                    directScore,
-                    directToCleanScore,
-                    cleanToDirectScore
-                );
-
-            /*
-             * Ek accidental route ko poori ranking dominate nahi karne dena.
-             * Best route important hai, lekin second-best agreement bhi zaroori hai.
-             */
-
-            double finalScore =
-                sameRouteAverage * 0.42 +
-                crossRouteAverage * 0.26 +
-                bestRoute * 0.20 +
-                secondBestRoute * 0.12;
-
-            int strongRoutes = 0;
-            int mediumRoutes = 0;
-            int weakRoutes = 0;
-
-            CountRoute(
-                cleanScore,
-                ref strongRoutes,
-                ref mediumRoutes,
-                ref weakRoutes
-            );
-
-            CountRoute(
-                directScore,
-                ref strongRoutes,
-                ref mediumRoutes,
-                ref weakRoutes
-            );
-
-            CountRoute(
-                directToCleanScore,
-                ref strongRoutes,
-                ref mediumRoutes,
-                ref weakRoutes
-            );
-
-            CountRoute(
-                cleanToDirectScore,
-                ref strongRoutes,
-                ref mediumRoutes,
-                ref weakRoutes
-            );
-
-            double routeSpread =
-                bestRoute -
-                Minimum(
-                    cleanScore,
-                    directScore,
-                    directToCleanScore,
-                    cleanToDirectScore
-                );
-
-            if (strongRoutes == 0)
+            if (HasExtendedData(first) &&
+                HasExtendedData(second))
             {
-                finalScore *= 0.60;
-            }
-            else if (strongRoutes == 1)
-            {
-                finalScore *= 0.78;
+                return CompareExtended(first, second);
             }
 
-            if (mediumRoutes <= 1)
-            {
-                finalScore *= 0.76;
-            }
-            else if (mediumRoutes == 2)
-            {
-                finalScore *= 0.90;
-            }
-
-            if (weakRoutes >= 3)
-            {
-                finalScore *= 0.70;
-            }
-            else if (weakRoutes == 2)
-            {
-                finalScore *= 0.84;
-            }
-
-            if (routeSpread > 44)
-            {
-                finalScore *= 0.70;
-            }
-            else if (routeSpread > 32)
-            {
-                finalScore *= 0.82;
-            }
-            else if (routeSpread > 22)
-            {
-                finalScore *= 0.92;
-            }
-
-            /*
-             * High score sirf multi-route agreement par.
-             */
-
-            if (strongRoutes < 2 &&
-                finalScore > 64)
-            {
-                finalScore = 64;
-            }
-
-            if (strongRoutes < 3 &&
-                finalScore > 78)
-            {
-                finalScore = 78;
-            }
-
-            if (strongRoutes < 4 &&
-                finalScore > 90)
-            {
-                finalScore = 90;
-            }
-
-            if (cleanScore >= 82 &&
-                directScore >= 72 &&
-                crossRouteAverage >= 68 &&
-                routeSpread <= 18)
-            {
-                finalScore += 3.0;
-            }
-
-            return Math.Round(
-                Clamp(
-                    finalScore,
-                    0,
-                    100
-                ),
-                2
-            );
+            // Purane 32-byte descriptor ke liye fallback.
+            return CompareLegacy(first, second);
         }
 
-        private static double CompareRoute(
-            byte[] query,
-            byte[] candidate,
-            int queryRoute,
-            int candidateRoute)
+        private static double CompareExtended(
+            ImageFingerprint first,
+            ImageFingerprint second)
         {
-            double fullScore =
-                ComparePart(
-                    query,
-                    candidate,
-                    queryRoute,
-                    candidateRoute,
-                    FullPart,
-                    FullPart
-                );
+            double occupancyScore = HashSimilarity(first.Hash, second.Hash);
+            double edgeHashScore = HashSimilarity(first.EdgeHash, second.EdgeHash);
+            double horizontalScore = HashSimilarity(first.HorizontalHash, second.HorizontalHash);
+            double verticalScore = HashSimilarity(first.VerticalHash, second.VerticalHash);
+            double radialScore = HashSimilarity(first.RadialHash, second.RadialHash);
 
-            double centerScore =
-                ComparePart(
-                    query,
-                    candidate,
-                    queryRoute,
-                    candidateRoute,
-                    CenterPart,
-                    CenterPart
-                );
+            double darkScore = SimilarityFromDifference(
+                Math.Abs(first.DarkRatio - second.DarkRatio), 0.28);
 
-            double normalLeft =
-                ComparePart(
-                    query,
-                    candidate,
-                    queryRoute,
-                    candidateRoute,
-                    LeftPart,
-                    LeftPart
-                );
+            double edgeRatioScore = SimilarityFromDifference(
+                Math.Abs(first.EdgeRatio - second.EdgeRatio), 0.24);
 
-            double normalRight =
-                ComparePart(
-                    query,
-                    candidate,
-                    queryRoute,
-                    candidateRoute,
-                    RightPart,
-                    RightPart
-                );
+            double aspectScore = RatioSimilarity(
+                first.AspectRatio, second.AspectRatio);
 
-            double mirrorLeft =
-                ComparePart(
-                    query,
-                    candidate,
-                    queryRoute,
-                    candidateRoute,
-                    LeftPart,
-                    RightPart
-                );
+            double centroidScore = SimilarityFromDifference(
+                Distance(
+                    first.CenterX,
+                    first.CenterY,
+                    second.CenterX,
+                    second.CenterY),
+                0.28);
 
-            double mirrorRight =
-                ComparePart(
-                    query,
-                    candidate,
-                    queryRoute,
-                    candidateRoute,
-                    RightPart,
-                    LeftPart
-                );
+            double holeScore = SimilarityFromDifference(
+                Math.Abs(first.BorderRatio - second.BorderRatio), 0.22);
 
-            double normalSideScore =
-                (
-                    normalLeft +
-                    normalRight
-                ) / 2.0;
-
-            double mirrorSideScore =
-                (
-                    mirrorLeft +
-                    mirrorRight
-                ) / 2.0;
-
-            double sideScore =
-                Math.Max(
-                    normalSideScore,
-                    mirrorSideScore
-                );
-
-            double topScore =
-                ComparePart(
-                    query,
-                    candidate,
-                    queryRoute,
-                    candidateRoute,
-                    TopPart,
-                    TopPart
-                );
-
-            double bottomScore =
-                ComparePart(
-                    query,
-                    candidate,
-                    queryRoute,
-                    candidateRoute,
-                    BottomPart,
-                    BottomPart
-                );
-
-            double verticalScore =
-                (
-                    topScore +
-                    bottomScore
-                ) / 2.0;
-
-            double finalScore =
-                fullScore * 0.34 +
-                centerScore * 0.32 +
-                sideScore * 0.16 +
-                verticalScore * 0.18;
-
-            int strongParts = 0;
-            int mediumParts = 0;
-            int weakParts = 0;
-
-            CountPart(
-                fullScore,
-                ref strongParts,
-                ref mediumParts,
-                ref weakParts
-            );
-
-            CountPart(
-                centerScore,
-                ref strongParts,
-                ref mediumParts,
-                ref weakParts
-            );
-
-            if (mirrorSideScore >
-                normalSideScore + 3)
-            {
-                CountPart(
-                    mirrorLeft,
-                    ref strongParts,
-                    ref mediumParts,
-                    ref weakParts
-                );
-
-                CountPart(
-                    mirrorRight,
-                    ref strongParts,
-                    ref mediumParts,
-                    ref weakParts
-                );
-            }
-            else
-            {
-                CountPart(
-                    normalLeft,
-                    ref strongParts,
-                    ref mediumParts,
-                    ref weakParts
-                );
-
-                CountPart(
-                    normalRight,
-                    ref strongParts,
-                    ref mediumParts,
-                    ref weakParts
-                );
-            }
-
-            CountPart(
-                topScore,
-                ref strongParts,
-                ref mediumParts,
-                ref weakParts
-            );
-
-            CountPart(
-                bottomScore,
-                ref strongParts,
-                ref mediumParts,
-                ref weakParts
-            );
-
-            /*
-             * Main silhouette weak ho to random ornamental design reject.
-             */
-
-            if (fullScore < 30)
-            {
-                finalScore *= 0.48;
-            }
-            else if (fullScore < 43)
-            {
-                finalScore *= 0.66;
-            }
-            else if (fullScore < 55)
-            {
-                finalScore *= 0.83;
-            }
-
-            /*
-             * Center design identity.
-             */
-
-            if (centerScore < 30)
-            {
-                finalScore *= 0.48;
-            }
-            else if (centerScore < 43)
-            {
-                finalScore *= 0.66;
-            }
-            else if (centerScore < 56)
-            {
-                finalScore *= 0.83;
-            }
-
-            /*
-             * Sirf ek-do matching parts se high score nahi.
-             */
-
-            if (strongParts == 0)
-            {
-                finalScore *= 0.56;
-            }
-            else if (strongParts == 1)
-            {
-                finalScore *= 0.72;
-            }
-            else if (strongParts == 2)
-            {
-                finalScore *= 0.87;
-            }
-
-            if (mediumParts <= 1)
-            {
-                finalScore *= 0.66;
-            }
-            else if (mediumParts == 2)
-            {
-                finalScore *= 0.82;
-            }
-
-            if (weakParts >= 4)
-            {
-                finalScore *= 0.70;
-            }
-            else if (weakParts == 3)
-            {
-                finalScore *= 0.84;
-            }
-
-            double maximum =
-                Maximum(
-                    fullScore,
-                    centerScore,
-                    sideScore,
-                    verticalScore
-                );
-
-            double minimum =
-                Minimum(
-                    fullScore,
-                    centerScore,
-                    sideScore,
-                    verticalScore
-                );
-
-            double spread =
-                maximum -
-                minimum;
-
-            if (spread > 48)
-            {
-                finalScore *= 0.72;
-            }
-            else if (spread > 36)
-            {
-                finalScore *= 0.83;
-            }
-            else if (spread > 27)
-            {
-                finalScore *= 0.92;
-            }
-
-            if (sideScore < 25)
-            {
-                finalScore *= 0.73;
-            }
-            else if (sideScore < 38)
-            {
-                finalScore *= 0.87;
-            }
-
-            if (strongParts < 3 &&
-                finalScore > 76)
-            {
-                finalScore = 76;
-            }
-
-            if (strongParts < 4 &&
-                finalScore > 85)
-            {
-                finalScore = 85;
-            }
-
-            if (strongParts < 5 &&
-                finalScore > 92)
-            {
-                finalScore = 92;
-            }
-
-            if (fullScore >= 83 &&
-                centerScore >= 81 &&
-                sideScore >= 70 &&
-                verticalScore >= 66 &&
-                strongParts >= 4)
-            {
-                finalScore += 3;
-            }
-
-            if (fullScore >= 90 &&
-                centerScore >= 87 &&
-                sideScore >= 79 &&
-                verticalScore >= 74 &&
-                strongParts >= 5)
-            {
-                finalScore += 3;
-            }
-
-            return Clamp(
-                finalScore,
-                0,
-                100
-            );
-        }
-
-        private static double ComparePart(
-            byte[] query,
-            byte[] candidate,
-            int queryRoute,
-            int candidateRoute,
-            int queryPart,
-            int candidatePart)
-        {
-            if (!CanReadPart(
-                    query,
-                    queryRoute,
-                    queryPart
-                ) ||
-                !CanReadPart(
-                    candidate,
-                    candidateRoute,
-                    candidatePart
-                ))
-            {
-                return 0;
-            }
-
-            double queryWeight =
-                ReadDouble(
-                    query,
-                    queryRoute,
-                    queryPart,
-                    WeightOffset
-                );
-
-            double candidateWeight =
-                ReadDouble(
-                    candidate,
-                    candidateRoute,
-                    candidatePart,
-                    WeightOffset
-                );
-
-            if (queryWeight <= 0 ||
-                candidateWeight <= 0)
-            {
-                return 0;
-            }
-
-            ImageFingerprint first =
-                ReadFingerprint(
-                    query,
-                    queryRoute,
-                    queryPart
-                );
-
-            ImageFingerprint second =
-                ReadFingerprint(
-                    candidate,
-                    candidateRoute,
-                    candidatePart
-                );
-
-            if (!IsFingerprintValid(first) ||
-                !IsFingerprintValid(second))
-            {
-                return 0;
-            }
+            double symmetryScore = SimilarityFromDifference(
+                Math.Abs(first.Symmetry - second.Symmetry), 0.34);
 
             double score =
-                ImageFingerprint.Compare(
-                    first,
-                    second
-                );
+                edgeHashScore * 0.25 +
+                radialScore * 0.22 +
+                horizontalScore * 0.14 +
+                verticalScore * 0.14 +
+                occupancyScore * 0.10 +
+                aspectScore * 0.05 +
+                holeScore * 0.04 +
+                edgeRatioScore * 0.025 +
+                darkScore * 0.02 +
+                centroidScore * 0.01 +
+                symmetryScore * 0.005;
 
-            double aspectDifference =
-                NormalizedDifference(
-                    first.AspectRatio,
-                    second.AspectRatio
-                );
+            int structuralMatches = 0;
+
+            if (edgeHashScore >= 0.68) structuralMatches++;
+            if (radialScore >= 0.68) structuralMatches++;
+            if (horizontalScore >= 0.68) structuralMatches++;
+            if (verticalScore >= 0.68) structuralMatches++;
+            if (occupancyScore >= 0.68) structuralMatches++;
+
+            if (edgeHashScore < 0.42)
+                score *= 0.62;
+            else if (edgeHashScore < 0.54)
+                score *= 0.78;
+
+            if (radialScore < 0.42)
+                score *= 0.66;
+            else if (radialScore < 0.54)
+                score *= 0.82;
+
+            if (horizontalScore < 0.44 &&
+                verticalScore < 0.44)
+            {
+                score *= 0.72;
+            }
+
+            if (aspectScore < 0.52)
+                score *= 0.72;
+            else if (aspectScore < 0.66)
+                score *= 0.86;
+
+            if (holeScore < 0.40)
+                score *= 0.80;
+
+            if (edgeRatioScore < 0.38)
+                score *= 0.78;
+
+            if (occupancyScore >= 0.68 &&
+                edgeHashScore < 0.50 &&
+                radialScore < 0.50)
+            {
+                score *= 0.58;
+            }
+
+            if (structuralMatches == 0)
+                score *= 0.58;
+            else if (structuralMatches == 1)
+                score *= 0.76;
+            else if (structuralMatches == 2)
+                score *= 0.90;
+
+            if (structuralMatches < 2 && score > 0.58)
+                score = 0.58;
+
+            if (structuralMatches < 3 && score > 0.72)
+                score = 0.72;
+
+            if (structuralMatches < 4 && score > 0.86)
+                score = 0.86;
+
+            if (structuralMatches >= 4 &&
+                edgeHashScore >= 0.78 &&
+                radialScore >= 0.76 &&
+                aspectScore >= 0.75)
+            {
+                score += 0.035;
+            }
+
+            score = Clamp01(score);
+
+            return Math.Round(score * 100.0, 2);
+        }
+
+        private static double CompareLegacy(
+            ImageFingerprint first,
+            ImageFingerprint second)
+        {
+            int hashDistance =
+                Hamming(first.Hash ^ second.Hash);
+
+            double hashScore =
+                1.0 - hashDistance / 64.0;
 
             double darkDifference =
                 Math.Abs(
@@ -872,236 +348,97 @@ namespace CDRPhotoMatchPro.Imaging
                     second.EdgeRatio
                 );
 
-            double borderDifference =
-                Math.Abs(
-                    first.BorderRatio -
-                    second.BorderRatio
-                );
+            double score =
+                hashScore * 0.68 +
+                SimilarityFromDifference(
+                    darkDifference,
+                    0.32
+                ) * 0.14 +
+                SimilarityFromDifference(
+                    edgeDifference,
+                    0.22
+                ) * 0.18;
 
-            double symmetryDifference =
-                Math.Abs(
-                    first.Symmetry -
-                    second.Symmetry
-                );
+            if (hashDistance > 26)
+                score *= 0.82;
 
-            double centerDistance =
-                Distance(
-                    first.CenterX,
-                    first.CenterY,
-                    second.CenterX,
-                    second.CenterY
-                );
+            if (hashDistance > 34)
+                score *= 0.72;
 
-            if (aspectDifference > 0.50)
-            {
-                score *= 0.66;
-            }
-            else if (aspectDifference > 0.35)
-            {
-                score *= 0.79;
-            }
-            else if (aspectDifference > 0.23)
-            {
-                score *= 0.90;
-            }
-
-            if (darkDifference > 0.30)
-            {
-                score *= 0.70;
-            }
-            else if (darkDifference > 0.20)
-            {
-                score *= 0.83;
-            }
-            else if (darkDifference > 0.13)
-            {
-                score *= 0.93;
-            }
-
-            if (edgeDifference > 0.23)
-            {
-                score *= 0.70;
-            }
-            else if (edgeDifference > 0.15)
-            {
-                score *= 0.84;
-            }
-            else if (edgeDifference > 0.10)
-            {
-                score *= 0.94;
-            }
-
-            if (borderDifference > 0.38)
-            {
+            if (darkDifference > 0.22)
                 score *= 0.78;
-            }
-            else if (borderDifference > 0.25)
+
+            if (edgeDifference > 0.16)
+                score *= 0.80;
+
+            // Purane weak descriptor ko bina evidence 95–98% nahi dena.
+            if (score > 0.90 &&
+                hashDistance > 5)
             {
-                score *= 0.89;
+                score = 0.90;
             }
 
-            if (symmetryDifference > 0.44)
-            {
-                score *= 0.84;
-            }
-            else if (symmetryDifference > 0.30)
-            {
-                score *= 0.93;
-            }
+            score = Clamp01(score);
 
-            if (centerDistance > 0.36)
-            {
-                score *= 0.78;
-            }
-            else if (centerDistance > 0.24)
-            {
-                score *= 0.89;
-            }
-
-            return Clamp(
-                score,
-                0,
-                100
+            return Math.Round(
+                score * 100.0,
+                2
             );
         }
 
-        private static List<ImageSegment> BuildPreparedSegments(
-            Bitmap source,
-            bool strictLineArt)
+        private static ImageFingerprint Empty()
         {
-            var segments =
-                new List<ImageSegment>();
-
-            if (source == null ||
-                source.Width <= 0 ||
-                source.Height <= 0)
+            return new ImageFingerprint
             {
-                return segments;
-            }
+                Hash = 0,
+                DarkRatio = 0,
+                EdgeRatio = 0,
 
-            Bitmap normalized = null;
+                EdgeHash = 0,
+                HorizontalHash = 0,
+                VerticalHash = 0,
+                RadialHash = 0,
 
-            try
-            {
-                normalized =
-                    NormalizePreparedImage(
-                        source,
-                        strictLineArt
-                    );
-
-                int width = normalized.Width;
-                int height = normalized.Height;
-
-                AddPreparedSegment(
-                    segments,
-                    normalized,
-                    "FULL",
-                    new Rectangle(
-                        0,
-                        0,
-                        width,
-                        height
-                    ),
-                    1.00
-                );
-
-                AddPreparedSegment(
-                    segments,
-                    normalized,
-                    "CENTER",
-                    new Rectangle(
-                        width * 17 / 100,
-                        height * 17 / 100,
-                        width * 66 / 100,
-                        height * 66 / 100
-                    ),
-                    0.95
-                );
-
-                AddPreparedSegment(
-                    segments,
-                    normalized,
-                    "LEFT",
-                    new Rectangle(
-                        0,
-                        height * 8 / 100,
-                        width * 58 / 100,
-                        height * 84 / 100
-                    ),
-                    0.68
-                );
-
-                AddPreparedSegment(
-                    segments,
-                    normalized,
-                    "RIGHT",
-                    new Rectangle(
-                        width * 42 / 100,
-                        height * 8 / 100,
-                        width * 58 / 100,
-                        height * 84 / 100
-                    ),
-                    0.68
-                );
-
-                AddPreparedSegment(
-                    segments,
-                    normalized,
-                    "TOP",
-                    new Rectangle(
-                        width * 6 / 100,
-                        0,
-                        width * 88 / 100,
-                        height * 48 / 100
-                    ),
-                    0.74
-                );
-
-                AddPreparedSegment(
-                    segments,
-                    normalized,
-                    "BOTTOM",
-                    new Rectangle(
-                        width * 6 / 100,
-                        height * 52 / 100,
-                        width * 88 / 100,
-                        height * 48 / 100
-                    ),
-                    0.78
-                );
-            }
-            catch
-            {
-                DisposeSegments(
-                    segments
-                );
-
-                segments.Clear();
-            }
-            finally
-            {
-                if (normalized != null)
-                    normalized.Dispose();
-            }
-
-            return segments;
+                AspectRatio = 0,
+                CenterX = 0,
+                CenterY = 0,
+                BorderRatio = 0,
+                Symmetry = 0
+            };
         }
 
-        private static Bitmap NormalizePreparedImage(
-            Bitmap source,
-            bool strictLineArt)
+        private static bool HasExtendedData(
+            ImageFingerprint fingerprint)
         {
-            Bitmap result =
-                new Bitmap(
-                    PreparedSize,
-                    PreparedSize,
-                    PixelFormat.Format24bppRgb
-                );
+            if (fingerprint == null)
+                return false;
+
+            return
+                fingerprint.EdgeHash != 0 ||
+                fingerprint.HorizontalHash != 0 ||
+                fingerprint.VerticalHash != 0 ||
+                fingerprint.RadialHash != 0 ||
+                fingerprint.AspectRatio > 0;
+        }
+
+        private static Bitmap Normalize(Bitmap source)
+        {
+            Bitmap result = new Bitmap(
+                WorkingSize,
+                WorkingSize,
+                PixelFormat.Format24bppRgb
+            );
 
             using (Graphics graphics =
                 Graphics.FromImage(result))
             {
                 graphics.Clear(Color.White);
+
+                graphics.CompositingMode =
+                    CompositingMode.SourceCopy;
+
+                graphics.CompositingQuality =
+                    CompositingQuality.HighQuality;
 
                 graphics.InterpolationMode =
                     InterpolationMode.HighQualityBicubic;
@@ -1112,54 +449,32 @@ namespace CDRPhotoMatchPro.Imaging
                 graphics.PixelOffsetMode =
                     PixelOffsetMode.HighQuality;
 
-                int margin = 10;
-                int available =
-                    PreparedSize -
-                    margin * 2;
+                double scale = Math.Min(
+                    (WorkingSize - 8.0) /
+                    Math.Max(1, source.Width),
+                    (WorkingSize - 8.0) /
+                    Math.Max(1, source.Height)
+                );
 
-                double scale =
-                    Math.Min(
-                        available /
-                        (double)Math.Max(
-                            1,
-                            source.Width
-                        ),
-                        available /
-                        (double)Math.Max(
-                            1,
-                            source.Height
-                        )
-                    );
+                int drawWidth = Math.Max(
+                    1,
+                    (int)Math.Round(
+                        source.Width * scale
+                    )
+                );
 
-                int drawWidth =
-                    Math.Max(
-                        1,
-                        (int)Math.Round(
-                            source.Width *
-                            scale
-                        )
-                    );
-
-                int drawHeight =
-                    Math.Max(
-                        1,
-                        (int)Math.Round(
-                            source.Height *
-                            scale
-                        )
-                    );
+                int drawHeight = Math.Max(
+                    1,
+                    (int)Math.Round(
+                        source.Height * scale
+                    )
+                );
 
                 int drawX =
-                    (
-                        PreparedSize -
-                        drawWidth
-                    ) / 2;
+                    (WorkingSize - drawWidth) / 2;
 
                 int drawY =
-                    (
-                        PreparedSize -
-                        drawHeight
-                    ) / 2;
+                    (WorkingSize - drawHeight) / 2;
 
                 graphics.DrawImage(
                     source,
@@ -1177,734 +492,1114 @@ namespace CDRPhotoMatchPro.Imaging
                 );
             }
 
-            if (strictLineArt)
-                MakeStrictBlackWhite(result);
+            return result;
+        }
+
+        private static int[,] ReadGrayValues(
+            Bitmap bitmap)
+        {
+            int width = bitmap.Width;
+            int height = bitmap.Height;
+
+            int[,] values =
+                new int[width, height];
+
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    Color color =
+                        bitmap.GetPixel(x, y);
+
+                    values[x, y] =
+                        (
+                            color.R * 299 +
+                            color.G * 587 +
+                            color.B * 114
+                        ) / 1000;
+                }
+            }
+
+            return values;
+        }
+
+        private static int CalculateOtsuThreshold(
+            int[,] grayValues,
+            int width,
+            int height)
+        {
+            int[] histogram = new int[256];
+            int totalPixels = width * height;
+
+            if (totalPixels <= 0)
+                return 180;
+
+            long totalIntensity = 0;
+
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    int value =
+                        ClampInt(
+                            grayValues[x, y],
+                            0,
+                            255
+                        );
+
+                    histogram[value]++;
+                    totalIntensity += value;
+                }
+            }
+
+            long backgroundIntensity = 0;
+            int backgroundCount = 0;
+
+            double maximumVariance = -1;
+            int bestThreshold = 180;
+
+            for (int threshold = 0;
+                 threshold < 256;
+                 threshold++)
+            {
+                backgroundCount +=
+                    histogram[threshold];
+
+                if (backgroundCount == 0)
+                    continue;
+
+                int foregroundCount =
+                    totalPixels -
+                    backgroundCount;
+
+                if (foregroundCount == 0)
+                    break;
+
+                backgroundIntensity +=
+                    (long)threshold *
+                    histogram[threshold];
+
+                double backgroundMean =
+                    backgroundIntensity /
+                    (double)backgroundCount;
+
+                double foregroundMean =
+                    (
+                        totalIntensity -
+                        backgroundIntensity
+                    ) /
+                    (double)foregroundCount;
+
+                double difference =
+                    backgroundMean -
+                    foregroundMean;
+
+                double variance =
+                    backgroundCount *
+                    (double)foregroundCount *
+                    difference *
+                    difference;
+
+                if (variance > maximumVariance)
+                {
+                    maximumVariance = variance;
+                    bestThreshold = threshold;
+                }
+            }
+
+            return ClampInt(
+                bestThreshold,
+                70,
+                225
+            );
+        }
+
+        private static bool[,] BuildForegroundMask(
+            int[,] grayValues,
+            int width,
+            int height,
+            int threshold)
+        {
+            bool[,] darkMask =
+                new bool[width, height];
+
+            bool[,] lightMask =
+                new bool[width, height];
+
+            int darkCount = 0;
+            int lightCount = 0;
+
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    int gray =
+                        grayValues[x, y];
+
+                    bool dark =
+                        gray <= threshold;
+
+                    bool light =
+                        gray >= 255 - threshold;
+
+                    darkMask[x, y] = dark;
+                    lightMask[x, y] = light;
+
+                    if (dark)
+                        darkCount++;
+
+                    if (light)
+                        lightCount++;
+                }
+            }
+
+            double darkRatio =
+                darkCount /
+                (double)Math.Max(
+                    1,
+                    width * height
+                );
+
+            double lightRatio =
+                lightCount /
+                (double)Math.Max(
+                    1,
+                    width * height
+                );
+
+            // Usually jewellery/design dark hota hai aur background light.
+            // Dark mask unreasonable ho to inverted image handle karo.
+            if (darkRatio > 0.72 &&
+                lightRatio > 0.015 &&
+                lightRatio < darkRatio)
+            {
+                return lightMask;
+            }
+
+            return darkMask;
+        }
+
+        private static void CleanMask(
+            bool[,] mask,
+            int width,
+            int height)
+        {
+            for (int pass = 0; pass < 2; pass++)
+            {
+                bool[,] next =
+                    new bool[width, height];
+
+                for (int y = 1;
+                     y < height - 1;
+                     y++)
+                {
+                    for (int x = 1;
+                         x < width - 1;
+                         x++)
+                    {
+                        int neighbours =
+                            CountNeighbours(
+                                mask,
+                                x,
+                                y
+                            );
+
+                        if (mask[x, y])
+                        {
+                            next[x, y] =
+                                neighbours >= 2;
+                        }
+                        else
+                        {
+                            next[x, y] =
+                                neighbours >= 6;
+                        }
+                    }
+                }
+
+                CopyMask(
+                    next,
+                    mask,
+                    width,
+                    height
+                );
+            }
+
+            // Single-pixel holes aur breaks ko halka close karo.
+            bool[,] closed =
+                new bool[width, height];
+
+            for (int y = 1;
+                 y < height - 1;
+                 y++)
+            {
+                for (int x = 1;
+                     x < width - 1;
+                     x++)
+                {
+                    int neighbours =
+                        CountNeighbours(
+                            mask,
+                            x,
+                            y
+                        );
+
+                    closed[x, y] =
+                        mask[x, y] ||
+                        neighbours >= 5;
+                }
+            }
+
+            CopyMask(
+                closed,
+                mask,
+                width,
+                height
+            );
+        }
+
+        private static int CountNeighbours(
+            bool[,] mask,
+            int x,
+            int y)
+        {
+            int count = 0;
+
+            for (int yy = y - 1;
+                 yy <= y + 1;
+                 yy++)
+            {
+                for (int xx = x - 1;
+                     xx <= x + 1;
+                     xx++)
+                {
+                    if (xx == x && yy == y)
+                        continue;
+
+                    if (mask[xx, yy])
+                        count++;
+                }
+            }
+
+            return count;
+        }
+
+        private static void CopyMask(
+            bool[,] source,
+            bool[,] destination,
+            int width,
+            int height)
+        {
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    destination[x, y] =
+                        source[x, y];
+                }
+            }
+        }
+
+        private static Rectangle FindForegroundBounds(
+            bool[,] mask,
+            int width,
+            int height)
+        {
+            int minimumX = width;
+            int minimumY = height;
+            int maximumX = -1;
+            int maximumY = -1;
+
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    if (!mask[x, y])
+                        continue;
+
+                    if (x < minimumX)
+                        minimumX = x;
+
+                    if (x > maximumX)
+                        maximumX = x;
+
+                    if (y < minimumY)
+                        minimumY = y;
+
+                    if (y > maximumY)
+                        maximumY = y;
+                }
+            }
+
+            if (maximumX < minimumX ||
+                maximumY < minimumY)
+            {
+                return Rectangle.Empty;
+            }
+
+            return Rectangle.FromLTRB(
+                minimumX,
+                minimumY,
+                maximumX + 1,
+                maximumY + 1
+            );
+        }
+
+        private static bool[,] CenterForeground(
+            bool[,] source,
+            Rectangle bounds,
+            int targetWidth,
+            int targetHeight)
+        {
+            bool[,] result =
+                new bool[targetWidth, targetHeight];
+
+            if (bounds.Width <= 0 ||
+                bounds.Height <= 0)
+            {
+                return result;
+            }
+
+            double scale = Math.Min(
+                (targetWidth - 12.0) /
+                bounds.Width,
+                (targetHeight - 12.0) /
+                bounds.Height
+            );
+
+            int destinationWidth =
+                Math.Max(
+                    1,
+                    (int)Math.Round(
+                        bounds.Width * scale
+                    )
+                );
+
+            int destinationHeight =
+                Math.Max(
+                    1,
+                    (int)Math.Round(
+                        bounds.Height * scale
+                    )
+                );
+
+            int destinationX =
+                (targetWidth -
+                 destinationWidth) / 2;
+
+            int destinationY =
+                (targetHeight -
+                 destinationHeight) / 2;
+
+            for (int y = 0;
+                 y < destinationHeight;
+                 y++)
+            {
+                double sourceY =
+                    bounds.Top +
+                    (
+                        y + 0.5
+                    ) /
+                    Math.Max(
+                        0.0001,
+                        scale
+                    );
+
+                int originalY =
+                    ClampInt(
+                        (int)sourceY,
+                        bounds.Top,
+                        bounds.Bottom - 1
+                    );
+
+                int finalY =
+                    destinationY + y;
+
+                if (finalY < 0 ||
+                    finalY >= targetHeight)
+                {
+                    continue;
+                }
+
+                for (int x = 0;
+                     x < destinationWidth;
+                     x++)
+                {
+                    double sourceX =
+                        bounds.Left +
+                        (
+                            x + 0.5
+                        ) /
+                        Math.Max(
+                            0.0001,
+                            scale
+                        );
+
+                    int originalX =
+                        ClampInt(
+                            (int)sourceX,
+                            bounds.Left,
+                            bounds.Right - 1
+                        );
+
+                    int finalX =
+                        destinationX + x;
+
+                    if (finalX < 0 ||
+                        finalX >= targetWidth)
+                    {
+                        continue;
+                    }
+
+                    result[finalX, finalY] =
+                        source[
+                            originalX,
+                            originalY
+                        ];
+                }
+            }
 
             return result;
         }
 
-        private static void MakeStrictBlackWhite(
-            Bitmap bitmap)
+        private static bool[,] BuildEdgeMask(
+            bool[,] mask,
+            int width,
+            int height)
         {
-            long total = 0;
+            bool[,] edges =
+                new bool[width, height];
 
-            for (int y = 0;
-                 y < bitmap.Height;
+            for (int y = 1;
+                 y < height - 1;
                  y++)
             {
-                for (int x = 0;
-                     x < bitmap.Width;
+                for (int x = 1;
+                     x < width - 1;
                      x++)
                 {
-                    total += Gray(
-                        bitmap.GetPixel(
-                            x,
-                            y
-                        )
-                    );
+                    if (!mask[x, y])
+                        continue;
+
+                    bool isEdge =
+                        !mask[x - 1, y] ||
+                        !mask[x + 1, y] ||
+                        !mask[x, y - 1] ||
+                        !mask[x, y + 1] ||
+                        !mask[x - 1, y - 1] ||
+                        !mask[x + 1, y - 1] ||
+                        !mask[x - 1, y + 1] ||
+                        !mask[x + 1, y + 1];
+
+                    edges[x, y] = isEdge;
+                }
+            }
+
+            return edges;
+        }
+
+        private static ulong BuildGridHash(
+            bool[,] mask,
+            int width,
+            int height)
+        {
+            double[] ratios =
+                new double[GridSize * GridSize];
+
+            double ratioTotal = 0;
+
+            for (int gridY = 0;
+                 gridY < GridSize;
+                 gridY++)
+            {
+                int startY =
+                    gridY * height /
+                    GridSize;
+
+                int endY =
+                    (gridY + 1) *
+                    height /
+                    GridSize;
+
+                for (int gridX = 0;
+                     gridX < GridSize;
+                     gridX++)
+                {
+                    int startX =
+                        gridX * width /
+                        GridSize;
+
+                    int endX =
+                        (gridX + 1) *
+                        width /
+                        GridSize;
+
+                    int truePixels = 0;
+                    int totalPixels = 0;
+
+                    for (int y = startY;
+                         y < endY;
+                         y++)
+                    {
+                        for (int x = startX;
+                             x < endX;
+                             x++)
+                        {
+                            if (mask[x, y])
+                                truePixels++;
+
+                            totalPixels++;
+                        }
+                    }
+
+                    double ratio =
+                        totalPixels > 0
+                            ? truePixels /
+                              (double)totalPixels
+                            : 0;
+
+                    int index =
+                        gridY * GridSize +
+                        gridX;
+
+                    ratios[index] = ratio;
+                    ratioTotal += ratio;
                 }
             }
 
             double average =
-                total /
-                (double)Math.Max(
+                ratioTotal /
+                Math.Max(
                     1,
-                    bitmap.Width *
-                    bitmap.Height
+                    ratios.Length
                 );
 
-            int threshold =
-                ClampInt(
-                    (int)(average - 18),
-                    90,
-                    225
+            ulong hash = 0;
+
+            for (int i = 0;
+                 i < ratios.Length;
+                 i++)
+            {
+                double threshold =
+                    Math.Max(
+                        0.035,
+                        average * 0.72
+                    );
+
+                if (ratios[i] >= threshold)
+                    hash |= 1UL << i;
+            }
+
+            return hash;
+        }
+
+        private static ulong BuildHorizontalProjectionHash(
+            bool[,] mask,
+            Rectangle bounds)
+        {
+            double[] bins =
+                new double[ProjectionBins];
+
+            for (int bin = 0;
+                 bin < ProjectionBins;
+                 bin++)
+            {
+                int startY =
+                    bounds.Top +
+                    bin *
+                    bounds.Height /
+                    ProjectionBins;
+
+                int endY =
+                    bounds.Top +
+                    (bin + 1) *
+                    bounds.Height /
+                    ProjectionBins;
+
+                if (endY <= startY)
+                    endY = startY + 1;
+
+                int truePixels = 0;
+                int totalPixels = 0;
+
+                for (int y = startY;
+                     y < endY &&
+                     y < bounds.Bottom;
+                     y++)
+                {
+                    for (int x = bounds.Left;
+                         x < bounds.Right;
+                         x++)
+                    {
+                        if (mask[x, y])
+                            truePixels++;
+
+                        totalPixels++;
+                    }
+                }
+
+                bins[bin] =
+                    totalPixels > 0
+                        ? truePixels /
+                          (double)totalPixels
+                        : 0;
+            }
+
+            return BuildProjectionHash(bins);
+        }
+
+        private static ulong BuildVerticalProjectionHash(
+            bool[,] mask,
+            Rectangle bounds)
+        {
+            double[] bins =
+                new double[ProjectionBins];
+
+            for (int bin = 0;
+                 bin < ProjectionBins;
+                 bin++)
+            {
+                int startX =
+                    bounds.Left +
+                    bin *
+                    bounds.Width /
+                    ProjectionBins;
+
+                int endX =
+                    bounds.Left +
+                    (bin + 1) *
+                    bounds.Width /
+                    ProjectionBins;
+
+                if (endX <= startX)
+                    endX = startX + 1;
+
+                int truePixels = 0;
+                int totalPixels = 0;
+
+                for (int x = startX;
+                     x < endX &&
+                     x < bounds.Right;
+                     x++)
+                {
+                    for (int y = bounds.Top;
+                         y < bounds.Bottom;
+                         y++)
+                    {
+                        if (mask[x, y])
+                            truePixels++;
+
+                        totalPixels++;
+                    }
+                }
+
+                bins[bin] =
+                    totalPixels > 0
+                        ? truePixels /
+                          (double)totalPixels
+                        : 0;
+            }
+
+            return BuildProjectionHash(bins);
+        }
+
+        private static ulong BuildProjectionHash(
+            double[] bins)
+        {
+            if (bins == null ||
+                bins.Length == 0)
+            {
+                return 0;
+            }
+
+            double average = 0;
+
+            for (int i = 0;
+                 i < bins.Length;
+                 i++)
+            {
+                average += bins[i];
+            }
+
+            average /=
+                Math.Max(
+                    1,
+                    bins.Length
                 );
+
+            ulong hash = 0;
+
+            // First 32 bits = bin occupancy.
+            for (int i = 0;
+                 i < bins.Length &&
+                 i < 32;
+                 i++)
+            {
+                if (bins[i] >= average)
+                    hash |= 1UL << i;
+            }
+
+            // Next 31 bits = direction/change between adjacent bins.
+            for (int i = 0;
+                 i < bins.Length - 1 &&
+                 i < 31;
+                 i++)
+            {
+                if (bins[i + 1] >= bins[i])
+                    hash |= 1UL << (32 + i);
+            }
+
+            // Last bit = overall strong density.
+            if (average >= 0.32)
+                hash |= 1UL << 63;
+
+            return hash;
+        }
+
+        private static ulong BuildRadialHash(
+            bool[,] mask,
+            Rectangle bounds,
+            PointF centroid)
+        {
+            double maximumRadius =
+                Math.Sqrt(
+                    bounds.Width *
+                    bounds.Width +
+                    bounds.Height *
+                    bounds.Height
+                ) / 2.0;
+
+            if (maximumRadius <= 0)
+                return 0;
+
+            int[] trueCounts =
+                new int[RadialBins];
+
+            int[] totalCounts =
+                new int[RadialBins];
+
+            for (int y = bounds.Top;
+                 y < bounds.Bottom;
+                 y++)
+            {
+                for (int x = bounds.Left;
+                     x < bounds.Right;
+                     x++)
+                {
+                    double radius =
+                        Distance(
+                            x,
+                            y,
+                            centroid.X,
+                            centroid.Y
+                        );
+
+                    int bin =
+                        ClampInt(
+                            (int)(
+                                radius /
+                                maximumRadius *
+                                RadialBins
+                            ),
+                            0,
+                            RadialBins - 1
+                        );
+
+                    totalCounts[bin]++;
+
+                    if (mask[x, y])
+                        trueCounts[bin]++;
+                }
+            }
+
+            double[] ratios =
+                new double[RadialBins];
+
+            double average = 0;
+
+            for (int i = 0;
+                 i < RadialBins;
+                 i++)
+            {
+                ratios[i] =
+                    totalCounts[i] > 0
+                        ? trueCounts[i] /
+                          (double)totalCounts[i]
+                        : 0;
+
+                average += ratios[i];
+            }
+
+            average /=
+                Math.Max(
+                    1,
+                    RadialBins
+                );
+
+            ulong hash = 0;
+
+            for (int i = 0;
+                 i < RadialBins;
+                 i++)
+            {
+                if (ratios[i] >= average)
+                    hash |= 1UL << i;
+            }
+
+            return hash;
+        }
+
+        private static PointF CalculateCentroid(
+            bool[,] mask,
+            int width,
+            int height)
+        {
+            double sumX = 0;
+            double sumY = 0;
+            int count = 0;
 
             for (int y = 0;
-                 y < bitmap.Height;
+                 y < height;
                  y++)
             {
                 for (int x = 0;
-                     x < bitmap.Width;
+                     x < width;
                      x++)
                 {
-                    int gray =
-                        Gray(
-                            bitmap.GetPixel(
-                                x,
-                                y
-                            )
-                        );
+                    if (!mask[x, y])
+                        continue;
 
-                    bitmap.SetPixel(
-                        x,
-                        y,
-                        gray < threshold
-                            ? Color.Black
-                            : Color.White
-                    );
+                    sumX += x;
+                    sumY += y;
+                    count++;
                 }
             }
-        }
 
-        private static void AddPreparedSegment(
-            List<ImageSegment> segments,
-            Bitmap source,
-            string name,
-            Rectangle bounds,
-            double weight)
-        {
-            Rectangle imageBounds =
-                new Rectangle(
-                    0,
-                    0,
-                    source.Width,
-                    source.Height
-                );
-
-            bounds.Intersect(imageBounds);
-
-            if (bounds.Width < 10 ||
-                bounds.Height < 10)
+            if (count <= 0)
             {
-                return;
+                return new PointF(
+                    width / 2.0f,
+                    height / 2.0f
+                );
             }
 
-            Bitmap crop =
-                source.Clone(
-                    bounds,
-                    PixelFormat.Format24bppRgb
+            return new PointF(
+                (float)(sumX / count),
+                (float)(sumY / count)
+            );
+        }
+
+        private static double CalculateBorderRatio(
+            bool[,] mask,
+            Rectangle bounds)
+        {
+            if (bounds.Width <= 0 ||
+                bounds.Height <= 0)
+            {
+                return 0;
+            }
+
+            int borderPixels = 0;
+            int foregroundPixels = 0;
+
+            int borderThickness =
+                Math.Max(
+                    1,
+                    Math.Min(
+                        bounds.Width,
+                        bounds.Height
+                    ) / 12
                 );
 
-            segments.Add(
-                new ImageSegment
+            for (int y = bounds.Top;
+                 y < bounds.Bottom;
+                 y++)
+            {
+                for (int x = bounds.Left;
+                     x < bounds.Right;
+                     x++)
                 {
-                    Name = name,
-                    Bitmap = crop,
-                    Bounds = bounds,
-                    Weight = weight
-                }
-            );
-        }
+                    if (!mask[x, y])
+                        continue;
 
-        private static bool HasUsableSegments(
-            List<ImageSegment> segments)
-        {
-            if (segments == null ||
-                segments.Count < MaxParts)
-            {
-                return false;
-            }
+                    foregroundPixels++;
 
-            if (segments[FullPart] == null ||
-                segments[FullPart].Bitmap == null)
-            {
-                return false;
-            }
+                    bool nearBorder =
+                        x < bounds.Left +
+                            borderThickness ||
+                        x >= bounds.Right -
+                            borderThickness ||
+                        y < bounds.Top +
+                            borderThickness ||
+                        y >= bounds.Bottom -
+                            borderThickness;
 
-            return true;
-        }
-
-        private static void WriteRoute(
-            byte[] descriptor,
-            int route,
-            List<ImageSegment> segments)
-        {
-            if (descriptor == null ||
-                segments == null)
-            {
-                return;
-            }
-
-            int count =
-                Math.Min(
-                    MaxParts,
-                    segments.Count
-                );
-
-            for (int index = 0;
-                 index < count;
-                 index++)
-            {
-                ImageSegment segment =
-                    segments[index];
-
-                if (segment == null ||
-                    segment.Bitmap == null)
-                {
-                    continue;
-                }
-
-                ImageFingerprint fingerprint =
-                    ImageFingerprint.FromBitmap(
-                        segment.Bitmap
-                    );
-
-                if (fingerprint == null)
-                    continue;
-
-                WritePart(
-                    descriptor,
-                    route,
-                    index,
-                    fingerprint,
-                    segment.Weight
-                );
-            }
-        }
-
-        private static ImageFingerprint ReadFingerprint(
-            byte[] descriptor,
-            int route,
-            int part)
-        {
-            return new ImageFingerprint
-            {
-                Hash =
-                    ReadUlong(
-                        descriptor,
-                        route,
-                        part,
-                        HashOffset
-                    ),
-
-                EdgeHash =
-                    ReadUlong(
-                        descriptor,
-                        route,
-                        part,
-                        EdgeHashOffset
-                    ),
-
-                HorizontalHash =
-                    ReadUlong(
-                        descriptor,
-                        route,
-                        part,
-                        HorizontalHashOffset
-                    ),
-
-                VerticalHash =
-                    ReadUlong(
-                        descriptor,
-                        route,
-                        part,
-                        VerticalHashOffset
-                    ),
-
-                RadialHash =
-                    ReadUlong(
-                        descriptor,
-                        route,
-                        part,
-                        RadialHashOffset
-                    ),
-
-                DarkRatio =
-                    ReadDouble(
-                        descriptor,
-                        route,
-                        part,
-                        DarkRatioOffset
-                    ),
-
-                EdgeRatio =
-                    ReadDouble(
-                        descriptor,
-                        route,
-                        part,
-                        EdgeRatioOffset
-                    ),
-
-                AspectRatio =
-                    ReadDouble(
-                        descriptor,
-                        route,
-                        part,
-                        AspectRatioOffset
-                    ),
-
-                CenterX =
-                    ReadDouble(
-                        descriptor,
-                        route,
-                        part,
-                        CenterXOffset
-                    ),
-
-                CenterY =
-                    ReadDouble(
-                        descriptor,
-                        route,
-                        part,
-                        CenterYOffset
-                    ),
-
-                BorderRatio =
-                    ReadDouble(
-                        descriptor,
-                        route,
-                        part,
-                        BorderRatioOffset
-                    ),
-
-                Symmetry =
-                    ReadDouble(
-                        descriptor,
-                        route,
-                        part,
-                        SymmetryOffset
-                    )
-            };
-        }
-
-        private static void WritePart(
-            byte[] descriptor,
-            int route,
-            int part,
-            ImageFingerprint fingerprint,
-            double weight)
-        {
-            if (!CanReadPart(
-                    descriptor,
-                    route,
-                    part
-                ))
-            {
-                return;
-            }
-
-            WriteUlong(
-                descriptor,
-                route,
-                part,
-                HashOffset,
-                fingerprint.Hash
-            );
-
-            WriteUlong(
-                descriptor,
-                route,
-                part,
-                EdgeHashOffset,
-                fingerprint.EdgeHash
-            );
-
-            WriteUlong(
-                descriptor,
-                route,
-                part,
-                HorizontalHashOffset,
-                fingerprint.HorizontalHash
-            );
-
-            WriteUlong(
-                descriptor,
-                route,
-                part,
-                VerticalHashOffset,
-                fingerprint.VerticalHash
-            );
-
-            WriteUlong(
-                descriptor,
-                route,
-                part,
-                RadialHashOffset,
-                fingerprint.RadialHash
-            );
-
-            WriteDouble(
-                descriptor,
-                route,
-                part,
-                DarkRatioOffset,
-                fingerprint.DarkRatio
-            );
-
-            WriteDouble(
-                descriptor,
-                route,
-                part,
-                EdgeRatioOffset,
-                fingerprint.EdgeRatio
-            );
-
-            WriteDouble(
-                descriptor,
-                route,
-                part,
-                AspectRatioOffset,
-                fingerprint.AspectRatio
-            );
-
-            WriteDouble(
-                descriptor,
-                route,
-                part,
-                CenterXOffset,
-                fingerprint.CenterX
-            );
-
-            WriteDouble(
-                descriptor,
-                route,
-                part,
-                CenterYOffset,
-                fingerprint.CenterY
-            );
-
-            WriteDouble(
-                descriptor,
-                route,
-                part,
-                BorderRatioOffset,
-                fingerprint.BorderRatio
-            );
-
-            WriteDouble(
-                descriptor,
-                route,
-                part,
-                SymmetryOffset,
-                fingerprint.Symmetry
-            );
-
-            WriteDouble(
-                descriptor,
-                route,
-                part,
-                WeightOffset,
-                weight
-            );
-        }
-
-        private static void WriteUlong(
-            byte[] descriptor,
-            int route,
-            int part,
-            int relativeOffset,
-            ulong value)
-        {
-            int offset =
-                GetPartOffset(
-                    route,
-                    part
-                ) +
-                relativeOffset;
-
-            Array.Copy(
-                BitConverter.GetBytes(value),
-                0,
-                descriptor,
-                offset,
-                8
-            );
-        }
-
-        private static void WriteDouble(
-            byte[] descriptor,
-            int route,
-            int part,
-            int relativeOffset,
-            double value)
-        {
-            int offset =
-                GetPartOffset(
-                    route,
-                    part
-                ) +
-                relativeOffset;
-
-            Array.Copy(
-                BitConverter.GetBytes(value),
-                0,
-                descriptor,
-                offset,
-                8
-            );
-        }
-
-        private static ulong ReadUlong(
-            byte[] descriptor,
-            int route,
-            int part,
-            int relativeOffset)
-        {
-            return BitConverter.ToUInt64(
-                descriptor,
-                GetPartOffset(
-                    route,
-                    part
-                ) +
-                relativeOffset
-            );
-        }
-
-        private static double ReadDouble(
-            byte[] descriptor,
-            int route,
-            int part,
-            int relativeOffset)
-        {
-            return BitConverter.ToDouble(
-                descriptor,
-                GetPartOffset(
-                    route,
-                    part
-                ) +
-                relativeOffset
-            );
-        }
-
-        private static int GetPartOffset(
-            int route,
-            int part)
-        {
-            return route * RouteSize +
-                   part * PartSize;
-        }
-
-        private static bool CanReadPart(
-            byte[] descriptor,
-            int route,
-            int part)
-        {
-            if (descriptor == null ||
-                route < 0 ||
-                route >= RouteCount ||
-                part < 0 ||
-                part >= MaxParts)
-            {
-                return false;
-            }
-
-            int start =
-                GetPartOffset(
-                    route,
-                    part
-                );
-
-            return start >= 0 &&
-                   start + PartSize <=
-                   descriptor.Length;
-        }
-
-        private static bool IsValidDescriptor(
-            byte[] descriptor)
-        {
-            if (descriptor == null ||
-                descriptor.Length < TotalBytes)
-            {
-                return false;
-            }
-
-            return IsRouteValid(
-                       descriptor,
-                       CleanRoute
-                   ) ||
-                   IsRouteValid(
-                       descriptor,
-                       DirectRoute
-                   );
-        }
-
-        private static bool IsRouteValid(
-            byte[] descriptor,
-            int route)
-        {
-            if (!CanReadPart(
-                    descriptor,
-                    route,
-                    FullPart
-                ))
-            {
-                return false;
-            }
-
-            double weight =
-                ReadDouble(
-                    descriptor,
-                    route,
-                    FullPart,
-                    WeightOffset
-                );
-
-            if (weight <= 0 ||
-                double.IsNaN(weight) ||
-                double.IsInfinity(weight))
-            {
-                return false;
-            }
-
-            return IsFingerprintValid(
-                ReadFingerprint(
-                    descriptor,
-                    route,
-                    FullPart
-                )
-            );
-        }
-
-        private static bool IsFingerprintValid(
-            ImageFingerprint fingerprint)
-        {
-            if (fingerprint == null)
-                return false;
-
-            bool hasSignature =
-                fingerprint.Hash != 0 ||
-                fingerprint.EdgeHash != 0 ||
-                fingerprint.HorizontalHash != 0 ||
-                fingerprint.VerticalHash != 0 ||
-                fingerprint.RadialHash != 0;
-
-            return hasSignature &&
-                   !double.IsNaN(
-                       fingerprint.AspectRatio
-                   ) &&
-                   !double.IsInfinity(
-                       fingerprint.AspectRatio
-                   ) &&
-                   fingerprint.AspectRatio > 0;
-        }
-
-        public Size ReadSize(
-            string imagePath)
-        {
-            try
-            {
-                if (string.IsNullOrEmpty(imagePath) ||
-                    !File.Exists(imagePath))
-                {
-                    return new Size(0, 0);
-                }
-
-                using (Bitmap bitmap =
-                    new Bitmap(imagePath))
-                {
-                    return new Size(
-                        bitmap.Width,
-                        bitmap.Height
-                    );
+                    if (nearBorder)
+                        borderPixels++;
                 }
             }
-            catch
+
+            if (foregroundPixels <= 0)
+                return 0;
+
+            return borderPixels /
+                   (double)foregroundPixels;
+        }
+
+        private static double CalculateSymmetry(
+            bool[,] mask,
+            Rectangle bounds)
+        {
+            if (bounds.Width <= 1 ||
+                bounds.Height <= 1)
             {
-                return new Size(0, 0);
+                return 0;
             }
-        }
 
-        public Size ReadSize(
-            byte[] descriptorBytes)
-        {
-            return new Size(
-                256,
-                256
-            );
-        }
+            int matches = 0;
+            int comparisons = 0;
 
-        private static void CountRoute(
-            double score,
-            ref int strongRoutes,
-            ref int mediumRoutes,
-            ref int weakRoutes)
-        {
-            if (score >= 72)
-                strongRoutes++;
-
-            if (score >= 56)
-                mediumRoutes++;
-
-            if (score < 34)
-                weakRoutes++;
-        }
-
-        private static double SecondLargest(
-            double first,
-            double second,
-            double third,
-            double fourth)
-        {
-            double[] values =
+            for (int y = bounds.Top;
+                 y < bounds.Bottom;
+                 y++)
             {
-                first,
-                second,
-                third,
-                fourth
-            };
-
-            Array.Sort(values);
-
-            return values[2];
-        }
-
-        private static void CountPart(
-            double score,
-            ref int strongParts,
-            ref int mediumParts,
-            ref int weakParts)
-        {
-            if (score >= 74)
-                strongParts++;
-
-            if (score >= 56)
-                mediumParts++;
-
-            if (score < 40)
-                weakParts++;
-        }
-
-        private static void DisposeSegments(
-            List<ImageSegment> segments)
-        {
-            if (segments == null)
-                return;
-
-            for (int index = 0;
-                 index < segments.Count;
-                 index++)
-            {
-                try
+                for (int offset = 0;
+                     offset < bounds.Width / 2;
+                     offset++)
                 {
-                    if (segments[index] != null &&
-                        segments[index].Bitmap != null)
+                    int leftX =
+                        bounds.Left + offset;
+
+                    int rightX =
+                        bounds.Right -
+                        1 -
+                        offset;
+
+                    if (mask[leftX, y] ==
+                        mask[rightX, y])
                     {
-                        segments[index].Bitmap.Dispose();
+                        matches++;
                     }
-                }
-                catch
-                {
+
+                    comparisons++;
                 }
             }
+
+            if (comparisons <= 0)
+                return 0;
+
+            return matches /
+                   (double)comparisons;
         }
 
-        private static double NormalizedDifference(
+        private static double CalculateTrueRatio(
+            bool[,] mask,
+            int width,
+            int height)
+        {
+            int truePixels = 0;
+            int totalPixels = width * height;
+
+            if (totalPixels <= 0)
+                return 0;
+
+            for (int y = 0;
+                 y < height;
+                 y++)
+            {
+                for (int x = 0;
+                     x < width;
+                     x++)
+                {
+                    if (mask[x, y])
+                        truePixels++;
+                }
+            }
+
+            return truePixels /
+                   (double)totalPixels;
+        }
+
+        private static void CountSignature(
+            double score,
+            ref int strong,
+            ref int medium,
+            ref int weak)
+        {
+            if (score >= 0.76)
+                strong++;
+
+            if (score >= 0.62)
+                medium++;
+
+            if (score < 0.48)
+                weak++;
+        }
+
+        private static double HashSimilarity(
+            ulong first,
+            ulong second)
+        {
+            int distance =
+                Hamming(first ^ second);
+
+            return Clamp01(
+                1.0 -
+                distance / 64.0
+            );
+        }
+
+        private static double RatioSimilarity(
             double first,
             double second)
         {
-            if (double.IsNaN(first) ||
-                double.IsInfinity(first) ||
-                double.IsNaN(second) ||
-                double.IsInfinity(second))
+            double difference =
+                NormalizedRatioDifference(
+                    first,
+                    second
+                );
+
+            return Clamp01(
+                1.0 -
+                difference
+            );
+        }
+
+        private static double NormalizedRatioDifference(
+            double first,
+            double second)
+        {
+            if (first <= 0 ||
+                second <= 0)
             {
                 return 1;
             }
 
             double maximum =
-                Math.Max(
-                    Math.Abs(first),
-                    Math.Abs(second)
-                );
+                Math.Max(first, second);
 
-            if (maximum <= 0.000001)
-                return 0;
+            if (maximum <= 0)
+                return 1;
 
             return Math.Abs(
                        first -
                        second
                    ) /
                    maximum;
+        }
+
+        private static double SimilarityFromDifference(
+            double difference,
+            double maximumDifference)
+        {
+            if (maximumDifference <= 0)
+                return 0;
+
+            return Clamp01(
+                1.0 -
+                difference /
+                maximumDifference
+            );
         }
 
         private static double Distance(
@@ -1929,38 +1624,35 @@ namespace CDRPhotoMatchPro.Imaging
             );
         }
 
-        private static double Maximum(
-            double first,
-            double second,
-            double third,
-            double fourth)
+        private static int Hamming(ulong value)
         {
-            return Math.Max(
-                Math.Max(first, second),
-                Math.Max(third, fourth)
-            );
+            int count = 0;
+
+            while (value != 0)
+            {
+                value &= value - 1;
+                count++;
+            }
+
+            return count;
         }
 
-        private static double Minimum(
-            double first,
-            double second,
-            double third,
-            double fourth)
+        private static double Clamp01(
+            double value)
         {
-            return Math.Min(
-                Math.Min(first, second),
-                Math.Min(third, fourth)
-            );
-        }
+            if (double.IsNaN(value) ||
+                double.IsInfinity(value))
+            {
+                return 0;
+            }
 
-        private static int Gray(
-            Color color)
-        {
-            return (
-                color.R * 299 +
-                color.G * 587 +
-                color.B * 114
-            ) / 1000;
+            if (value < 0)
+                return 0;
+
+            if (value > 1)
+                return 1;
+
+            return value;
         }
 
         private static int ClampInt(
@@ -1968,26 +1660,6 @@ namespace CDRPhotoMatchPro.Imaging
             int minimum,
             int maximum)
         {
-            if (value < minimum)
-                return minimum;
-
-            if (value > maximum)
-                return maximum;
-
-            return value;
-        }
-
-        private static double Clamp(
-            double value,
-            double minimum,
-            double maximum)
-        {
-            if (double.IsNaN(value) ||
-                double.IsInfinity(value))
-            {
-                return minimum;
-            }
-
             if (value < minimum)
                 return minimum;
 
