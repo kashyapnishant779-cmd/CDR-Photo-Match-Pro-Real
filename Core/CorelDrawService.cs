@@ -81,8 +81,8 @@ namespace CDRPhotoMatchPro.Core
                     var consumed = new HashSet<int>();
 
                     // STEP 1:
-                    // CorelDRAW me jo actual GROUP already bana hua hai,
-                    // usko ek complete design maan kar seedha export karo.
+                    // Existing Corel group ko standalone record bhi rakho.
+                    // Isse already-complete grouped design miss nahi hota.
                     for (int i = 0; i < all.Count; i++)
                     {
                         ShapeInfo info = all[i];
@@ -101,28 +101,21 @@ namespace CDRPhotoMatchPro.Core
                                 Math.Max(1, info.ChildCount),
                                 results))
                         {
-                            consumed.Add(info.Index);
                             designNo++;
                         }
                     }
 
                     // STEP 2:
-                    // Ungrouped / combined / curve / normal top-level objects ko
-                    // proximity ke basis par complete jewellery components me jodo.
-                    var loose = new List<ShapeInfo>();
-
-                    for (int i = 0; i < all.Count; i++)
-                    {
-                        ShapeInfo info = all[i];
-
-                        if (!consumed.Contains(info.Index))
-                            loose.Add(info);
-                    }
-
+                    // IMPORTANT:
+                    // Mixed CDR me ek complete jewellery:
+                    // group + loose curve, group + group, ya combined object + loose part
+                    // se ban sakti hai. Isliye existing groups ko smart grouping se
+                    // bahar nahi nikalna hai. Pichhle build me isi wajah se exact
+                    // complete design cache se missing ho rahi thi.
                     List<List<ShapeInfo>> components =
-                        BuildLooseComponents(loose);
+                        BuildLooseComponents(all);
 
-                    Log("LOOSE-COMPONENTS=" + components.Count);
+                    Log("MIXED-COMPONENTS=" + components.Count);
 
                     for (int componentNo = 0;
                          componentNo < components.Count;
@@ -140,6 +133,10 @@ namespace CDRPhotoMatchPro.Core
                         if (component.Count == 1)
                         {
                             ShapeInfo info = component[0];
+
+                            // Existing group STEP 1 me already export ho chuka hai.
+                            if (info.IsExistingGroup)
+                                continue;
 
                             if (ExportSingleTopLevelShape(
                                     page,
@@ -171,9 +168,9 @@ namespace CDRPhotoMatchPro.Core
                                 cacheRoot,
                                 pageNo,
                                 designNo,
-                                "SMART-GROUP-HD",
+                                "MIXED-GROUP-HD",
                                 component.Count,
-                                "smart" + (componentNo + 1),
+                                "mixed" + (componentNo + 1),
                                 results))
                         {
                             for (int i = 0; i < component.Count; i++)
@@ -305,53 +302,105 @@ namespace CDRPhotoMatchPro.Core
             if (shapes == null || shapes.Count == 0)
                 return result;
 
-            bool[] used = new bool[shapes.Count];
+            var ordered = new List<ShapeInfo>(shapes);
 
-            for (int i = 0; i < shapes.Count; i++)
+            ordered.Sort(
+                delegate(ShapeInfo a, ShapeInfo b)
+                {
+                    float ax = a.Box.Left + a.Box.Width / 2f;
+                    float bx = b.Box.Left + b.Box.Width / 2f;
+
+                    int compare = ax.CompareTo(bx);
+
+                    if (compare != 0)
+                        return compare;
+
+                    return a.Box.Top.CompareTo(b.Box.Top);
+                }
+            );
+
+            bool[] used = new bool[ordered.Count];
+
+            for (int i = 0; i < ordered.Count; i++)
             {
                 if (used[i])
                     continue;
 
                 var component = new List<ShapeInfo>();
-                var queue = new Queue<int>();
-
+                component.Add(ordered[i]);
                 used[i] = true;
-                queue.Enqueue(i);
 
-                while (queue.Count > 0)
+                RectangleF groupBox = ordered[i].Box;
+                bool added;
+
+                do
                 {
-                    int current = queue.Dequeue();
-                    ShapeInfo currentInfo = shapes[current];
+                    added = false;
 
-                    component.Add(currentInfo);
+                    int bestIndex = -1;
+                    float bestDistance = float.MaxValue;
 
-                    for (int j = 0; j < shapes.Count; j++)
+                    for (int j = 0; j < ordered.Count; j++)
                     {
                         if (used[j])
                             continue;
 
+                        ShapeInfo candidate = ordered[j];
+
                         if (!ShouldJoinLooseShapes(
-                                currentInfo.Box,
-                                shapes[j].Box))
+                                groupBox,
+                                candidate.Box))
                         {
                             continue;
                         }
 
-                        used[j] = true;
-                        queue.Enqueue(j);
+                        float groupCenterX =
+                            groupBox.Left + groupBox.Width / 2f;
+
+                        float groupCenterY =
+                            groupBox.Top + groupBox.Height / 2f;
+
+                        float candidateCenterX =
+                            candidate.Box.Left +
+                            candidate.Box.Width / 2f;
+
+                        float candidateCenterY =
+                            candidate.Box.Top +
+                            candidate.Box.Height / 2f;
+
+                        float distance =
+                            Math.Abs(groupCenterX - candidateCenterX) +
+                            Math.Abs(groupCenterY - candidateCenterY);
+
+                        if (distance < bestDistance)
+                        {
+                            bestDistance = distance;
+                            bestIndex = j;
+                        }
+                    }
+
+                    // 12 top-level items tak allow hain.
+                    // Existing Corel group ek hi top-level item count hota hai,
+                    // isliye complex jewellery bhi complete ban sakti hai.
+                    if (bestIndex >= 0 &&
+                        component.Count < 12)
+                    {
+                        ShapeInfo selected = ordered[bestIndex];
+
+                        component.Add(selected);
+                        used[bestIndex] = true;
+
+                        groupBox = RectangleF.Union(
+                            groupBox,
+                            selected.Box
+                        );
+
+                        added = true;
                     }
                 }
+                while (added);
 
-                // Accidental chain-merging se poora page ek component na bane.
-                // Agar component bahut bada/door-door hai to usko vertical gaps se split karo.
-                List<List<ShapeInfo>> split =
-                    SplitOversizedLooseComponent(component);
-
-                for (int s = 0; s < split.Count; s++)
-                {
-                    if (split[s].Count > 0)
-                        result.Add(split[s]);
-                }
+                result.Add(component);
             }
 
             return result;
