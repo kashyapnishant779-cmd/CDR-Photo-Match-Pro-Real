@@ -22,6 +22,9 @@ namespace CDRPhotoMatchPro.Core
         {
             public int Index;
             public RectangleF Box;
+            public int Type;
+            public int ChildCount;
+            public bool IsExistingGroup;
         }
 
         public CorelDrawService()
@@ -47,7 +50,7 @@ namespace CDRPhotoMatchPro.Core
             CleanOldImages(cacheRoot);
 
             _logFile = Path.Combine(cacheRoot, "export_debug.txt");
-            Log("START SMART JEWELLERY ENGINE: " + cdrPath);
+            Log("START MIXED CDR EXPORT ENGINE: " + cdrPath);
 
             dynamic doc = null;
 
@@ -69,297 +72,123 @@ namespace CDRPhotoMatchPro.Core
                         " TOP-LEVEL-SHAPES=" + shapeCount
                     );
 
-                    List<ShapeInfo> usable =
-                        CollectUsableShapes(page, shapeCount, pageNo);
+                    List<ShapeInfo> all =
+                        CollectTopLevelShapes(page, shapeCount, pageNo);
 
-                    Log("USABLE-SHAPES=" + usable.Count);
-
-                    List<List<int>> detailClusters =
-                        CollectSmallDetailClusters(page, shapeCount, pageNo);
-
-                    Log("SMALL-DETAIL-CLUSTERS=" + detailClusters.Count);
-
-                    List<List<int>> groups =
-                        BuildSmartGroups(usable);
-
-                    Log("SMART-GROUPS=" + groups.Count);
+                    Log("ACCEPTED-TOP-LEVEL-SHAPES=" + all.Count);
 
                     int designNo = 1;
-                    var groupedIndexes = new HashSet<int>();
+                    var consumed = new HashSet<int>();
 
-                    // Detailed jewellery made from many very small nearby parts.
-                    // Earlier these parts were rejected one-by-one by the size filter,
-                    // so the complete design disappeared from the index.
-                    for (int detailNo = 0;
-                         detailNo < detailClusters.Count;
-                         detailNo++)
+                    // STEP 1:
+                    // CorelDRAW me jo actual GROUP already bana hua hai,
+                    // usko ek complete design maan kar seedha export karo.
+                    for (int i = 0; i < all.Count; i++)
                     {
-                        List<int> detailGroup = detailClusters[detailNo];
+                        ShapeInfo info = all[i];
 
-                        if (detailGroup == null || detailGroup.Count < 2)
+                        if (!info.IsExistingGroup)
                             continue;
 
-                        try
+                        if (ExportSingleTopLevelShape(
+                                page,
+                                info,
+                                cdrPath,
+                                cacheRoot,
+                                pageNo,
+                                designNo,
+                                "COREL-GROUP-HD",
+                                Math.Max(1, info.ChildCount),
+                                results))
                         {
-                            if (!SelectIndexes(page, detailGroup))
-                                continue;
-
-                            string baseName =
-                                SafeName(
-                                    Path.GetFileNameWithoutExtension(cdrPath)
-                                ) +
-                                "_p" + pageNo +
-                                "_detail" + (detailNo + 1);
-
-                            string pngPath = Path.Combine(
-                                cacheRoot,
-                                baseName + "_HD.png"
-                            );
-
-                            string thumbPath = Path.Combine(
-                                cacheRoot,
-                                baseName + "_thumb.jpg"
-                            );
-
-                            CopyActiveSelection();
-                            Thread.Sleep(250);
-
-                            if (!SaveClipboardArtwork(
-                                    pngPath,
-                                    thumbPath))
-                            {
-                                Log(
-                                    "DETAIL EXPORT FAILED detail=" +
-                                    (detailNo + 1)
-                                );
-
-                                continue;
-                            }
-
-                            if (!IsUsefulExport(pngPath))
-                            {
-                                SafeDelete(pngPath);
-                                SafeDelete(thumbPath);
-
-                                Log(
-                                    "DETAIL REJECTED detail=" +
-                                    (detailNo + 1)
-                                );
-
-                                continue;
-                            }
-
-                            results.Add(
-                                CreateRecord(
-                                    cdrPath,
-                                    thumbPath,
-                                    pngPath,
-                                    pageNo,
-                                    designNo,
-                                    "DETAIL-CLUSTER-HD",
-                                    detailGroup.Count
-                                )
-                            );
-
-                            Log(
-                                "DETAIL OK page=" + pageNo +
-                                " design=" + designNo +
-                                " shapes=" + detailGroup.Count
-                            );
-
+                            consumed.Add(info.Index);
                             designNo++;
-                        }
-                        catch (Exception ex)
-                        {
-                            Log(
-                                "DETAIL FAILED page=" + pageNo +
-                                " detail=" + (detailNo + 1) +
-                                " error=" + ex.Message
-                            );
                         }
                     }
 
-                    // Complete nearby design groups
-                    for (int groupNo = 0;
-                         groupNo < groups.Count;
-                         groupNo++)
+                    // STEP 2:
+                    // Ungrouped / combined / curve / normal top-level objects ko
+                    // proximity ke basis par complete jewellery components me jodo.
+                    var loose = new List<ShapeInfo>();
+
+                    for (int i = 0; i < all.Count; i++)
                     {
-                        List<int> group = groups[groupNo];
+                        ShapeInfo info = all[i];
 
-                        if (group == null || group.Count < 2)
-                            continue;
-
-                        try
-                        {
-                            if (!SelectIndexes(page, group))
-                                continue;
-
-                            string baseName =
-                                SafeName(
-                                    Path.GetFileNameWithoutExtension(cdrPath)
-                                ) +
-                                "_p" + pageNo +
-                                "_group" + (groupNo + 1);
-
-                            string pngPath = Path.Combine(
-                                cacheRoot,
-                                baseName + "_HD.png"
-                            );
-
-                            string thumbPath = Path.Combine(
-                                cacheRoot,
-                                baseName + "_thumb.jpg"
-                            );
-
-                            CopyActiveSelection();
-                            Thread.Sleep(250);
-
-                            if (!SaveClipboardArtwork(
-                                    pngPath,
-                                    thumbPath))
-                            {
-                                Log(
-                                    "GROUP EXPORT FAILED group=" +
-                                    (groupNo + 1)
-                                );
-
-                                continue;
-                            }
-
-                            if (!IsUsefulExport(pngPath))
-                            {
-                                SafeDelete(pngPath);
-                                SafeDelete(thumbPath);
-
-                                Log(
-                                    "GROUP REJECTED group=" +
-                                    (groupNo + 1)
-                                );
-
-                                continue;
-                            }
-
-                            results.Add(
-                                CreateRecord(
-                                    cdrPath,
-                                    thumbPath,
-                                    pngPath,
-                                    pageNo,
-                                    designNo,
-                                    "GROUP-HD",
-                                    group.Count
-                                )
-                            );
-
-                            for (int i = 0; i < group.Count; i++)
-                                groupedIndexes.Add(group[i]);
-
-                            Log(
-                                "GROUP OK page=" + pageNo +
-                                " design=" + designNo +
-                                " shapes=" + group.Count
-                            );
-
-                            designNo++;
-                        }
-                        catch (Exception ex)
-                        {
-                            Log(
-                                "GROUP FAILED page=" + pageNo +
-                                " group=" + (groupNo + 1) +
-                                " error=" + ex.Message
-                            );
-                        }
+                        if (!consumed.Contains(info.Index))
+                            loose.Add(info);
                     }
 
-                    // Single objects fallback
-                    for (int i = 0; i < usable.Count; i++)
+                    List<List<ShapeInfo>> components =
+                        BuildLooseComponents(loose);
+
+                    Log("LOOSE-COMPONENTS=" + components.Count);
+
+                    for (int componentNo = 0;
+                         componentNo < components.Count;
+                         componentNo++)
                     {
-                        ShapeInfo info = usable[i];
+                        List<ShapeInfo> component =
+                            components[componentNo];
 
-                        try
+                        if (component == null ||
+                            component.Count == 0)
                         {
-                            // Jo object already proper group me export hua,
-                            // uska single duplicate sirf tab rakhen jab group chhota ho.
-                            if (groupedIndexes.Contains(info.Index))
-                                continue;
+                            continue;
+                        }
 
-                            dynamic shape = page.Shapes[info.Index];
+                        if (component.Count == 1)
+                        {
+                            ShapeInfo info = component[0];
 
-                            try
-                            {
-                                _app.ActiveDocument.ClearSelection();
-                            }
-                            catch
-                            {
-                            }
-
-                            shape.CreateSelection();
-                            Thread.Sleep(130);
-
-                            string baseName =
-                                SafeName(
-                                    Path.GetFileNameWithoutExtension(cdrPath)
-                                ) +
-                                "_p" + pageNo +
-                                "_obj" + info.Index;
-
-                            string pngPath = Path.Combine(
-                                cacheRoot,
-                                baseName + "_HD.png"
-                            );
-
-                            string thumbPath = Path.Combine(
-                                cacheRoot,
-                                baseName + "_thumb.jpg"
-                            );
-
-                            CopySelectedOrShape(shape);
-                            Thread.Sleep(220);
-
-                            if (!SaveClipboardArtwork(
-                                    pngPath,
-                                    thumbPath))
-                            {
-                                continue;
-                            }
-
-                            if (!IsUsefulExport(pngPath))
-                            {
-                                SafeDelete(pngPath);
-                                SafeDelete(thumbPath);
-                                continue;
-                            }
-
-                            results.Add(
-                                CreateRecord(
+                            if (ExportSingleTopLevelShape(
+                                    page,
+                                    info,
                                     cdrPath,
-                                    thumbPath,
-                                    pngPath,
+                                    cacheRoot,
                                     pageNo,
                                     designNo,
                                     "OBJECT-HD",
-                                    1
-                                )
-                            );
+                                    1,
+                                    results))
+                            {
+                                consumed.Add(info.Index);
+                                designNo++;
+                            }
 
-                            Log(
-                                "OBJECT OK page=" + pageNo +
-                                " shape=" + info.Index +
-                                " design=" + designNo
-                            );
+                            continue;
+                        }
+
+                        var indexes = new List<int>();
+
+                        for (int i = 0; i < component.Count; i++)
+                            indexes.Add(component[i].Index);
+
+                        if (ExportSelectedIndexes(
+                                page,
+                                indexes,
+                                cdrPath,
+                                cacheRoot,
+                                pageNo,
+                                designNo,
+                                "SMART-GROUP-HD",
+                                component.Count,
+                                "smart" + (componentNo + 1),
+                                results))
+                        {
+                            for (int i = 0; i < component.Count; i++)
+                                consumed.Add(component[i].Index);
 
                             designNo++;
                         }
-                        catch (Exception ex)
-                        {
-                            Log(
-                                "OBJECT FAILED page=" + pageNo +
-                                " shape=" + info.Index +
-                                " error=" + ex.Message
-                            );
-                        }
                     }
+
+                    Log(
+                        "PAGE COMPLETE page=" + pageNo +
+                        " designs=" + (designNo - 1) +
+                        " consumedTopLevel=" + consumed.Count +
+                        "/" + all.Count
+                    );
                 }
             }
             catch (Exception ex)
@@ -382,7 +211,7 @@ namespace CDRPhotoMatchPro.Core
             return results;
         }
 
-        private List<ShapeInfo> CollectUsableShapes(
+        private List<ShapeInfo> CollectTopLevelShapes(
             dynamic page,
             int shapeCount,
             int pageNo)
@@ -401,7 +230,6 @@ namespace CDRPhotoMatchPro.Core
                         Log(
                             "SHAPE REJECT page=" + pageNo +
                             " shape=" + i +
-                            " stage=USABLE" +
                             " reason=" + rejectReason
                         );
 
@@ -410,12 +238,11 @@ namespace CDRPhotoMatchPro.Core
 
                     RectangleF box = GetShapeBox(shape);
 
-                    if (!IsUsefulBox(box, out rejectReason))
+                    if (!IsPotentialDesignBox(box, out rejectReason))
                     {
                         Log(
                             "SHAPE REJECT page=" + pageNo +
                             " shape=" + i +
-                            " stage=BOX" +
                             " reason=" + rejectReason +
                             " left=" + box.Left.ToString("0.###") +
                             " top=" + box.Top.ToString("0.###") +
@@ -426,10 +253,20 @@ namespace CDRPhotoMatchPro.Core
                         continue;
                     }
 
+                    int type = GetShapeType(shape);
+                    int childCount = GetChildShapeCount(shape);
+
+                    // CorelDRAW X4 me real group normally child Shapes expose karta hai.
+                    // Type value par akela depend nahi karte, kyunki mixed/old CDR me
+                    // COM type handling kabhi-kabhi inconsistent ho sakti hai.
+                    bool isExistingGroup = childCount > 0;
+
                     Log(
                         "SHAPE ACCEPT page=" + pageNo +
                         " shape=" + i +
-                        " type=" + GetShapeTypeText(shape) +
+                        " type=" + type +
+                        " children=" + childCount +
+                        " existingGroup=" + isExistingGroup +
                         " left=" + box.Left.ToString("0.###") +
                         " top=" + box.Top.ToString("0.###") +
                         " width=" + box.Width.ToString("0.###") +
@@ -440,7 +277,10 @@ namespace CDRPhotoMatchPro.Core
                         new ShapeInfo
                         {
                             Index = i,
-                            Box = box
+                            Box = box,
+                            Type = type,
+                            ChildCount = childCount,
+                            IsExistingGroup = isExistingGroup
                         }
                     );
                 }
@@ -457,63 +297,22 @@ namespace CDRPhotoMatchPro.Core
             return list;
         }
 
-        private List<List<int>> CollectSmallDetailClusters(
-            dynamic page,
-            int shapeCount,
-            int pageNo)
+        private List<List<ShapeInfo>> BuildLooseComponents(
+            List<ShapeInfo> shapes)
         {
-            var details = new List<ShapeInfo>();
+            var result = new List<List<ShapeInfo>>();
 
-            for (int i = 1; i <= shapeCount; i++)
-            {
-                try
-                {
-                    dynamic shape = page.Shapes[i];
-                    string rejectReason;
+            if (shapes == null || shapes.Count == 0)
+                return result;
 
-                    if (!IsUsableShape(shape, out rejectReason))
-                        continue;
+            bool[] used = new bool[shapes.Count];
 
-                    RectangleF box = GetShapeBox(shape);
-
-                    // Keep only shapes rejected by the normal box filter.
-                    if (IsUsefulBox(box, out rejectReason))
-                        continue;
-
-                    if (!IsPotentialSmallDetail(box))
-                        continue;
-
-                    details.Add(
-                        new ShapeInfo
-                        {
-                            Index = i,
-                            Box = box
-                        }
-                    );
-                }
-                catch (Exception ex)
-                {
-                    Log(
-                        "DETAIL READ FAILED page=" + pageNo +
-                        " shape=" + i +
-                        " error=" + ex.Message
-                    );
-                }
-            }
-
-            var clusters = new List<List<int>>();
-
-            if (details.Count == 0)
-                return clusters;
-
-            bool[] used = new bool[details.Count];
-
-            for (int i = 0; i < details.Count; i++)
+            for (int i = 0; i < shapes.Count; i++)
             {
                 if (used[i])
                     continue;
 
-                var memberPositions = new List<int>();
+                var component = new List<ShapeInfo>();
                 var queue = new Queue<int>();
 
                 used[i] = true;
@@ -522,16 +321,18 @@ namespace CDRPhotoMatchPro.Core
                 while (queue.Count > 0)
                 {
                     int current = queue.Dequeue();
-                    memberPositions.Add(current);
+                    ShapeInfo currentInfo = shapes[current];
 
-                    for (int j = 0; j < details.Count; j++)
+                    component.Add(currentInfo);
+
+                    for (int j = 0; j < shapes.Count; j++)
                     {
                         if (used[j])
                             continue;
 
-                        if (!AreSmallDetailsConnected(
-                                details[current].Box,
-                                details[j].Box))
+                        if (!ShouldJoinLooseShapes(
+                                currentInfo.Box,
+                                shapes[j].Box))
                         {
                             continue;
                         }
@@ -541,77 +342,42 @@ namespace CDRPhotoMatchPro.Core
                     }
                 }
 
-                if (memberPositions.Count < 2)
-                    continue;
+                // Accidental chain-merging se poora page ek component na bane.
+                // Agar component bahut bada/door-door hai to usko vertical gaps se split karo.
+                List<List<ShapeInfo>> split =
+                    SplitOversizedLooseComponent(component);
 
-                RectangleF clusterBox =
-                    details[memberPositions[0]].Box;
-
-                var indexes = new List<int>();
-
-                for (int m = 0; m < memberPositions.Count; m++)
+                for (int s = 0; s < split.Count; s++)
                 {
-                    ShapeInfo info = details[memberPositions[m]];
-                    indexes.Add(info.Index);
-                    clusterBox = Union(clusterBox, info.Box);
+                    if (split[s].Count > 0)
+                        result.Add(split[s]);
                 }
-
-                // Ignore microscopic accidental dots. A genuine detailed design
-                // normally forms a visible combined box even when every part is tiny.
-                if (clusterBox.Width < 0.12f ||
-                    clusterBox.Height < 0.12f ||
-                    clusterBox.Width * clusterBox.Height < 0.025f)
-                {
-                    Log(
-                        "DETAIL CLUSTER REJECT page=" + pageNo +
-                        " shapes=" + indexes.Count +
-                        " width=" + clusterBox.Width.ToString("0.###") +
-                        " height=" + clusterBox.Height.ToString("0.###")
-                    );
-
-                    continue;
-                }
-
-                Log(
-                    "DETAIL CLUSTER ACCEPT page=" + pageNo +
-                    " shapes=" + indexes.Count +
-                    " left=" + clusterBox.Left.ToString("0.###") +
-                    " top=" + clusterBox.Top.ToString("0.###") +
-                    " width=" + clusterBox.Width.ToString("0.###") +
-                    " height=" + clusterBox.Height.ToString("0.###")
-                );
-
-                clusters.Add(indexes);
             }
 
-            return clusters;
+            return result;
         }
 
-        private bool IsPotentialSmallDetail(RectangleF box)
-        {
-            if (box.Width <= 0.002f || box.Height <= 0.002f)
-                return false;
-
-            if (box.Width > 0.75f || box.Height > 0.75f)
-                return false;
-
-            float ratio =
-                box.Width / Math.Max(0.0001f, box.Height);
-
-            if (ratio > 20f || ratio < 0.05f)
-                return false;
-
-            return true;
-        }
-
-        private bool AreSmallDetailsConnected(
+        private bool ShouldJoinLooseShapes(
             RectangleF a,
             RectangleF b)
         {
-            RectangleF intersection = RectangleF.Intersect(a, b);
+            RectangleF intersection =
+                RectangleF.Intersect(a, b);
 
             if (!intersection.IsEmpty)
-                return true;
+            {
+                float intersectionArea =
+                    intersection.Width * intersection.Height;
+
+                float smallerArea =
+                    Math.Min(
+                        Math.Max(0.0001f, a.Width * a.Height),
+                        Math.Max(0.0001f, b.Width * b.Height)
+                    );
+
+                if (intersectionArea / smallerArea >= 0.18f)
+                    return true;
+            }
 
             float horizontalGap = AxisGap(
                 a.Left,
@@ -627,270 +393,133 @@ namespace CDRPhotoMatchPro.Core
                 b.Bottom
             );
 
-            float maxSize = Math.Max(
-                Math.Max(a.Width, a.Height),
-                Math.Max(b.Width, b.Height)
+            float horizontalOverlap = OverlapAmount(
+                a.Left,
+                a.Right,
+                b.Left,
+                b.Right
             );
 
-            float allowedGap = Math.Max(
-                0.06f,
-                Math.Min(0.16f, maxSize * 0.60f)
+            float verticalOverlap = OverlapAmount(
+                a.Top,
+                a.Bottom,
+                b.Top,
+                b.Bottom
             );
 
-            return horizontalGap <= allowedGap &&
-                   verticalGap <= allowedGap;
+            float smallerWidth =
+                Math.Max(0.0001f, Math.Min(a.Width, b.Width));
+
+            float smallerHeight =
+                Math.Max(0.0001f, Math.Min(a.Height, b.Height));
+
+            double horizontalOverlapRatio =
+                horizontalOverlap / smallerWidth;
+
+            double verticalOverlapRatio =
+                verticalOverlap / smallerHeight;
+
+            float aCenterX = a.Left + a.Width / 2f;
+            float bCenterX = b.Left + b.Width / 2f;
+            float centerDifferenceX =
+                Math.Abs(aCenterX - bCenterX);
+
+            float aCenterY = a.Top + a.Height / 2f;
+            float bCenterY = b.Top + b.Height / 2f;
+            float centerDifferenceY =
+                Math.Abs(aCenterY - bCenterY);
+
+            float largerHeight = Math.Max(a.Height, b.Height);
+            float largerWidth = Math.Max(a.Width, b.Width);
+
+            // Jewellery ke top-main-drop parts:
+            // same vertical line + overlap + small vertical gap.
+            bool verticalChain =
+                centerDifferenceX <=
+                    Math.Max(1.0f, smallerWidth * 0.65f) &&
+                horizontalOverlapRatio >= 0.20 &&
+                verticalGap <=
+                    Math.Max(1.8f, largerHeight * 0.65f);
+
+            if (verticalChain)
+                return true;
+
+            // Side-by-side mirrored pieces ko tabhi jodo jab woh bahut kareeb hon
+            // aur vertical alignment strong ho.
+            bool horizontalPair =
+                centerDifferenceY <=
+                    Math.Max(0.8f, smallerHeight * 0.40f) &&
+                verticalOverlapRatio >= 0.50 &&
+                horizontalGap <=
+                    Math.Max(0.9f, largerWidth * 0.20f);
+
+            if (horizontalPair)
+                return true;
+
+            return false;
         }
 
-        private List<List<int>> BuildSmartGroups(List<ShapeInfo> shapes)
-{
-    var groups = new List<List<int>>();
-
-    if (shapes == null || shapes.Count == 0)
-        return groups;
-
-    var ordered = new List<ShapeInfo>(shapes);
-
-    ordered.Sort(
-        delegate(ShapeInfo a, ShapeInfo b)
+        private List<List<ShapeInfo>> SplitOversizedLooseComponent(
+            List<ShapeInfo> component)
         {
-            float ax = a.Box.Left + a.Box.Width / 2f;
-            float bx = b.Box.Left + b.Box.Width / 2f;
+            var result = new List<List<ShapeInfo>>();
 
-            int xCompare = ax.CompareTo(bx);
+            if (component == null || component.Count == 0)
+                return result;
 
-            if (xCompare != 0)
-                return xCompare;
-
-            return a.Box.Top.CompareTo(b.Box.Top);
-        }
-    );
-
-    bool[] used = new bool[ordered.Count];
-
-    for (int i = 0; i < ordered.Count; i++)
-    {
-        if (used[i])
-            continue;
-
-        var group = new List<int>();
-        group.Add(ordered[i].Index);
-        used[i] = true;
-
-        RectangleF groupBox = ordered[i].Box;
-        int addedCount = 1;
-
-        bool added;
-
-        do
-        {
-            added = false;
-
-            int bestIndex = -1;
-            float bestDistance = float.MaxValue;
-
-            for (int j = 0; j < ordered.Count; j++)
-            {
-                if (used[j])
-                    continue;
-
-                RectangleF candidate = ordered[j].Box;
-
-                if (!ShouldJoin(groupBox, candidate, 0))
-                    continue;
-
-                float groupCenterX =
-                    groupBox.Left + groupBox.Width / 2f;
-
-                float candidateCenterX =
-                    candidate.Left + candidate.Width / 2f;
-
-                float xDistance =
-                    Math.Abs(groupCenterX - candidateCenterX);
-
-                float verticalDistance = AxisGap(
-                    groupBox.Top,
-                    groupBox.Bottom,
-                    candidate.Top,
-                    candidate.Bottom
-                );
-
-                float distance =
-                    xDistance + verticalDistance;
-
-                if (distance < bestDistance)
-                {
-                    bestDistance = distance;
-                    bestIndex = j;
-                }
-            }
-
-            if (bestIndex >= 0 && addedCount < 4)
-            {
-                group.Add(ordered[bestIndex].Index);
-
-                groupBox = Union(
-                    groupBox,
-                    ordered[bestIndex].Box
-                );
-
-                used[bestIndex] = true;
-                addedCount++;
-                added = true;
-            }
-        }
-        while (added);
-
-        groups.Add(group);
-    }
-
-    return groups;
-}
-
-        private bool ShouldJoin(
-    RectangleF a,
-    RectangleF b,
-    float unusedGap)
-{
-    float aCenterX =
-        a.Left + a.Width / 2f;
-
-    float bCenterX =
-        b.Left + b.Width / 2f;
-
-    float centerDifference =
-        Math.Abs(aCenterX - bCenterX);
-
-    float smallerWidth =
-        Math.Min(a.Width, b.Width);
-
-    float largerHeight =
-        Math.Max(a.Height, b.Height);
-
-    float verticalGap = AxisGap(
-        a.Top,
-        a.Bottom,
-        b.Top,
-        b.Bottom
-    );
-
-    float horizontalOverlap = OverlapAmount(
-        a.Left,
-        a.Right,
-        b.Left,
-        b.Right
-    );
-
-    double overlapRatio =
-        smallerWidth > 0
-            ? horizontalOverlap / smallerWidth
-            : 0;
-
-    bool sameVerticalLine =
-        centerDifference <=
-        Math.Max(1.2f, smallerWidth * 0.42f);
-
-    bool enoughHorizontalOverlap =
-        overlapRatio >= 0.32;
-
-    bool closeVertically =
-        verticalGap <=
-        Math.Max(2.0f, largerHeight * 0.48f);
-
-    // Ek dusre ke upar/neeche aligned pieces:
-    // top + main + drop
-    if (sameVerticalLine &&
-        enoughHorizontalOverlap &&
-        closeVertically)
-    {
-        return true;
-    }
-
-    // Strong overlap ho to same design ka part ho sakta hai.
-    RectangleF intersection =
-        RectangleF.Intersect(a, b);
-
-    if (!intersection.IsEmpty)
-    {
-        float intersectionArea =
-            intersection.Width *
-            intersection.Height;
-
-        float smallerArea =
-            Math.Min(
-                a.Width * a.Height,
-                b.Width * b.Height
-            );
-
-        if (smallerArea > 0 &&
-            intersectionArea / smallerArea >= 0.30f)
-        {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-        private List<List<int>> SplitOversizedComponent(
-            List<int> component,
-            List<ShapeInfo> allShapes,
-            float medianSize)
-        {
-            var result = new List<List<int>>();
-
-            if (component.Count <= 12)
+            if (component.Count <= 16)
             {
                 result.Add(component);
                 return result;
             }
 
-            var infos = new List<ShapeInfo>();
+            var ordered = new List<ShapeInfo>(component);
 
-            for (int i = 0; i < component.Count; i++)
-            {
-                ShapeInfo found =
-                    FindShapeInfo(allShapes, component[i]);
-
-                if (found != null)
-                    infos.Add(found);
-            }
-
-            infos.Sort(
+            ordered.Sort(
                 delegate(ShapeInfo x, ShapeInfo y)
                 {
-                    int topCompare =
-                        x.Box.Top.CompareTo(y.Box.Top);
+                    float xCenter =
+                        x.Box.Left + x.Box.Width / 2f;
 
-                    if (topCompare != 0)
-                        return topCompare;
+                    float yCenter =
+                        y.Box.Left + y.Box.Width / 2f;
 
-                    return x.Box.Left.CompareTo(y.Box.Left);
+                    int compare = xCenter.CompareTo(yCenter);
+
+                    if (compare != 0)
+                        return compare;
+
+                    return x.Box.Top.CompareTo(y.Box.Top);
                 }
             );
 
-            float splitGap = Math.Max(
-                3f,
-                medianSize * 1.5f
-            );
+            var widths = new List<float>();
 
-            var current = new List<int>();
-            float previousBottom = float.MinValue;
+            for (int i = 0; i < ordered.Count; i++)
+                widths.Add(Math.Max(0.1f, ordered[i].Box.Width));
 
-            for (int i = 0; i < infos.Count; i++)
+            widths.Sort();
+            float medianWidth = widths[widths.Count / 2];
+            float splitGap = Math.Max(3.0f, medianWidth * 1.6f);
+
+            var current = new List<ShapeInfo>();
+            float previousRight = float.MinValue;
+
+            for (int i = 0; i < ordered.Count; i++)
             {
-                ShapeInfo info = infos[i];
+                ShapeInfo info = ordered[i];
 
                 if (current.Count > 0 &&
-                    info.Box.Top - previousBottom > splitGap)
+                    info.Box.Left - previousRight > splitGap)
                 {
                     result.Add(current);
-                    current = new List<int>();
+                    current = new List<ShapeInfo>();
                 }
 
-                current.Add(info.Index);
+                current.Add(info);
 
-                if (info.Box.Bottom > previousBottom)
-                    previousBottom = info.Box.Bottom;
+                if (info.Box.Right > previousRight)
+                    previousRight = info.Box.Right;
             }
 
             if (current.Count > 0)
@@ -899,41 +528,203 @@ namespace CDRPhotoMatchPro.Core
             return result;
         }
 
-        private ShapeInfo FindShapeInfo(
-            List<ShapeInfo> list,
-            int index)
+        private bool ExportSingleTopLevelShape(
+            dynamic page,
+            ShapeInfo info,
+            string cdrPath,
+            string cacheRoot,
+            int pageNo,
+            int designNo,
+            string mode,
+            int shapeCount,
+            List<DesignRecord> results)
         {
-            for (int i = 0; i < list.Count; i++)
+            try
             {
-                if (list[i].Index == index)
-                    return list[i];
-            }
+                dynamic shape = page.Shapes[info.Index];
 
-            return null;
-        }
+                try
+                {
+                    _app.ActiveDocument.ClearSelection();
+                }
+                catch
+                {
+                }
 
-        private float GetMedianSize(
-            List<ShapeInfo> shapes)
-        {
-            var sizes = new List<float>();
+                shape.CreateSelection();
+                Thread.Sleep(120);
 
-            for (int i = 0; i < shapes.Count; i++)
-            {
-                float value = Math.Max(
-                    shapes[i].Box.Width,
-                    shapes[i].Box.Height
+                string tag =
+                    mode == "COREL-GROUP-HD"
+                        ? "corelgroup" + info.Index
+                        : "obj" + info.Index;
+
+                string baseName =
+                    SafeName(
+                        Path.GetFileNameWithoutExtension(cdrPath)
+                    ) +
+                    "_p" + pageNo +
+                    "_" + tag;
+
+                string pngPath =
+                    Path.Combine(cacheRoot, baseName + "_HD.png");
+
+                string thumbPath =
+                    Path.Combine(cacheRoot, baseName + "_thumb.jpg");
+
+                CopySelectedOrShape(shape);
+                Thread.Sleep(220);
+
+                if (!SaveClipboardArtwork(pngPath, thumbPath))
+                {
+                    Log(
+                        "EXPORT FAILED page=" + pageNo +
+                        " shape=" + info.Index +
+                        " mode=" + mode
+                    );
+
+                    return false;
+                }
+
+                if (!IsUsefulExport(pngPath))
+                {
+                    SafeDelete(pngPath);
+                    SafeDelete(thumbPath);
+
+                    Log(
+                        "EXPORT REJECTED page=" + pageNo +
+                        " shape=" + info.Index +
+                        " mode=" + mode
+                    );
+
+                    return false;
+                }
+
+                results.Add(
+                    CreateRecord(
+                        cdrPath,
+                        thumbPath,
+                        pngPath,
+                        pageNo,
+                        designNo,
+                        mode,
+                        shapeCount
+                    )
                 );
 
-                if (value > 0)
-                    sizes.Add(value);
+                Log(
+                    "EXPORT OK page=" + pageNo +
+                    " design=" + designNo +
+                    " shape=" + info.Index +
+                    " mode=" + mode +
+                    " shapes=" + shapeCount
+                );
+
+                return true;
             }
+            catch (Exception ex)
+            {
+                Log(
+                    "EXPORT FAILED page=" + pageNo +
+                    " shape=" + info.Index +
+                    " mode=" + mode +
+                    " error=" + ex.Message
+                );
 
-            if (sizes.Count == 0)
-                return 5f;
+                return false;
+            }
+        }
 
-            sizes.Sort();
+        private bool ExportSelectedIndexes(
+            dynamic page,
+            List<int> indexes,
+            string cdrPath,
+            string cacheRoot,
+            int pageNo,
+            int designNo,
+            string mode,
+            int shapeCount,
+            string tag,
+            List<DesignRecord> results)
+        {
+            try
+            {
+                if (!SelectIndexes(page, indexes))
+                    return false;
 
-            return sizes[sizes.Count / 2];
+                string baseName =
+                    SafeName(
+                        Path.GetFileNameWithoutExtension(cdrPath)
+                    ) +
+                    "_p" + pageNo +
+                    "_" + tag;
+
+                string pngPath =
+                    Path.Combine(cacheRoot, baseName + "_HD.png");
+
+                string thumbPath =
+                    Path.Combine(cacheRoot, baseName + "_thumb.jpg");
+
+                CopyActiveSelection();
+                Thread.Sleep(220);
+
+                if (!SaveClipboardArtwork(pngPath, thumbPath))
+                {
+                    Log(
+                        "SELECTION EXPORT FAILED page=" + pageNo +
+                        " mode=" + mode +
+                        " shapes=" + shapeCount
+                    );
+
+                    return false;
+                }
+
+                if (!IsUsefulExport(pngPath))
+                {
+                    SafeDelete(pngPath);
+                    SafeDelete(thumbPath);
+
+                    Log(
+                        "SELECTION REJECTED page=" + pageNo +
+                        " mode=" + mode +
+                        " shapes=" + shapeCount
+                    );
+
+                    return false;
+                }
+
+                results.Add(
+                    CreateRecord(
+                        cdrPath,
+                        thumbPath,
+                        pngPath,
+                        pageNo,
+                        designNo,
+                        mode,
+                        shapeCount
+                    )
+                );
+
+                Log(
+                    "SELECTION OK page=" + pageNo +
+                    " design=" + designNo +
+                    " mode=" + mode +
+                    " shapes=" + shapeCount
+                );
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log(
+                    "SELECTION FAILED page=" + pageNo +
+                    " mode=" + mode +
+                    " shapes=" + shapeCount +
+                    " error=" + ex.Message
+                );
+
+                return false;
+            }
         }
 
         private bool SelectIndexes(
@@ -1006,7 +797,6 @@ namespace CDRPhotoMatchPro.Core
             }
             catch (Exception ex)
             {
-                // Type read fail hone par shape ko reject nahi karte.
                 Log("SHAPE TYPE READ WARNING: " + ex.Message);
             }
 
@@ -1022,67 +812,33 @@ namespace CDRPhotoMatchPro.Core
             }
             catch (Exception ex)
             {
-                // Visible property unavailable ho to shape ko reject nahi karte.
                 Log("SHAPE VISIBLE READ WARNING: " + ex.Message);
             }
 
             return true;
         }
 
-        private bool IsUsefulBox(
+        private bool IsPotentialDesignBox(
             RectangleF box,
             out string rejectReason)
         {
             rejectReason = "";
 
-            if (box.Width < 0.5f)
+            if (box.Width <= 0.002f ||
+                box.Height <= 0.002f)
             {
-                rejectReason =
-                    "WIDTH_TOO_SMALL width=" +
-                    box.Width.ToString("0.###");
-
-                return false;
-            }
-
-            if (box.Height < 0.5f)
-            {
-                rejectReason =
-                    "HEIGHT_TOO_SMALL height=" +
-                    box.Height.ToString("0.###");
-
+                rejectReason = "MICROSCOPIC";
                 return false;
             }
 
             float ratio =
-                box.Width /
-                Math.Max(0.001f, box.Height);
+                box.Width / Math.Max(0.001f, box.Height);
 
-            if (ratio > 12f)
+            if (ratio > 30f || ratio < 0.033f)
             {
                 rejectReason =
-                    "RATIO_TOO_WIDE ratio=" +
+                    "EXTREME_RATIO ratio=" +
                     ratio.ToString("0.###");
-
-                return false;
-            }
-
-            if (ratio < 0.08f)
-            {
-                rejectReason =
-                    "RATIO_TOO_TALL ratio=" +
-                    ratio.ToString("0.###");
-
-                return false;
-            }
-
-            float area =
-                box.Width * box.Height;
-
-            if (area < 0.5f)
-            {
-                rejectReason =
-                    "AREA_TOO_SMALL area=" +
-                    area.ToString("0.###");
 
                 return false;
             }
@@ -1090,15 +846,27 @@ namespace CDRPhotoMatchPro.Core
             return true;
         }
 
-        private string GetShapeTypeText(dynamic shape)
+        private int GetShapeType(dynamic shape)
         {
             try
             {
-                return Convert.ToString(shape.Type);
+                return Convert.ToInt32(shape.Type);
             }
             catch
             {
-                return "unknown";
+                return -1;
+            }
+        }
+
+        private int GetChildShapeCount(dynamic shape)
+        {
+            try
+            {
+                return Convert.ToInt32(shape.Shapes.Count);
+            }
+            catch
+            {
+                return 0;
             }
         }
 
@@ -1150,9 +918,7 @@ namespace CDRPhotoMatchPro.Core
                                 white++;
 
                             if (previous >= 0 &&
-                                Math.Abs(
-                                    brightness - previous
-                                ) > 45)
+                                Math.Abs(brightness - previous) > 45)
                             {
                                 edgeChanges++;
                             }
@@ -1177,7 +943,6 @@ namespace CDRPhotoMatchPro.Core
                     if (whiteRatio > 0.997)
                         return false;
 
-                    // Solid rectangle/polygon
                     if (darkRatio > 0.94 &&
                         edgeRatio < 0.04)
                     {
@@ -1221,39 +986,29 @@ namespace CDRPhotoMatchPro.Core
             );
         }
 
-        private RectangleF Union(
-            RectangleF a,
-            RectangleF b)
-        {
-            return RectangleF.FromLTRB(
-                Math.Min(a.Left, b.Left),
-                Math.Min(a.Top, b.Top),
-                Math.Max(a.Right, b.Right),
-                Math.Max(a.Bottom, b.Bottom)
-            );
-        }
-
         private void CleanOldImages(string cacheRoot)
         {
             try
             {
                 foreach (
                     string file in
-                    Directory.GetFiles(
-                        cacheRoot,
-                        "*.jpg"))
+                    Directory.GetFiles(cacheRoot, "*.jpg"))
                 {
                     File.Delete(file);
                 }
 
                 foreach (
                     string file in
-                    Directory.GetFiles(
-                        cacheRoot,
-                        "*.png"))
+                    Directory.GetFiles(cacheRoot, "*.png"))
                 {
                     File.Delete(file);
                 }
+
+                string oldLog =
+                    Path.Combine(cacheRoot, "export_debug.txt");
+
+                if (File.Exists(oldLog))
+                    File.Delete(oldLog);
             }
             catch
             {
@@ -1281,9 +1036,7 @@ namespace CDRPhotoMatchPro.Core
             {
             }
 
-            throw new InvalidOperationException(
-                "Copy failed."
-            );
+            throw new InvalidOperationException("Copy failed.");
         }
 
         private void CopyActiveSelection()
@@ -1326,8 +1079,7 @@ namespace CDRPhotoMatchPro.Core
         {
             try
             {
-                Image image =
-                    Clipboard.GetImage();
+                Image image = Clipboard.GetImage();
 
                 if (image != null)
                 {
@@ -1375,11 +1127,7 @@ namespace CDRPhotoMatchPro.Core
             }
             catch (Exception ex)
             {
-                Log(
-                    "SAVE FAILED: " +
-                    ex.Message
-                );
-
+                Log("SAVE FAILED: " + ex.Message);
                 return false;
             }
         }
@@ -1507,12 +1255,7 @@ namespace CDRPhotoMatchPro.Core
             if (height <= 0)
                 height = 1;
 
-            return new RectangleF(
-                x,
-                y,
-                width,
-                height
-            );
+            return new RectangleF(x, y, width, height);
         }
 
         private DesignRecord CreateRecord(
@@ -1769,8 +1512,7 @@ namespace CDRPhotoMatchPro.Core
                 char character in
                 Path.GetInvalidFileNameChars())
             {
-                name =
-                    name.Replace(character, '_');
+                name = name.Replace(character, '_');
             }
 
             return name;
