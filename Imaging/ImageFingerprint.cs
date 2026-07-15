@@ -73,9 +73,9 @@ namespace CDRPhotoMatchPro.Imaging
                     {
                         Hash = GridHash(centered),
                         EdgeHash = GridHash(edges),
-                        HorizontalHash = HorizontalHash(centered),
-                        VerticalHash = VerticalHash(centered),
-                        RadialHash = RadialHash(centered, centroid),
+                        HorizontalHash = BuildHorizontalHash(centered),
+                        VerticalHash = BuildVerticalHash(centered),
+                        RadialHash = BuildRadialHash(centered, centroid),
                         DarkRatio = darkRatio,
                         EdgeRatio = edgeRatio,
                         AspectRatio =
@@ -612,7 +612,7 @@ namespace CDRPhotoMatchPro.Imaging
             return hash;
         }
 
-        private static ulong HorizontalHash(
+        private static ulong BuildHorizontalHash(
             bool[,] mask)
         {
             double[] bins = new double[32];
@@ -648,7 +648,7 @@ namespace CDRPhotoMatchPro.Imaging
             return ProjectionHash(bins);
         }
 
-        private static ulong VerticalHash(
+        private static ulong BuildVerticalHash(
             bool[,] mask)
         {
             double[] bins = new double[32];
@@ -721,7 +721,7 @@ namespace CDRPhotoMatchPro.Imaging
             return hash;
         }
 
-        private static ulong RadialHash(
+        private static ulong BuildRadialHash(
             bool[,] mask,
             PointF center)
         {
