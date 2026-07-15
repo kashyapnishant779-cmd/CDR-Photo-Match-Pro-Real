@@ -256,7 +256,7 @@ namespace CDRPhotoMatchPro.Imaging
                 return 0;
             }
 
-            double cleanScore =
+            double cleanToClean =
                 CompareRoute(
                     query,
                     candidate,
@@ -264,7 +264,7 @@ namespace CDRPhotoMatchPro.Imaging
                     CleanRoute
                 );
 
-            double directScore =
+            double directToDirect =
                 CompareRoute(
                     query,
                     candidate,
@@ -272,15 +272,7 @@ namespace CDRPhotoMatchPro.Imaging
                     DirectRoute
                 );
 
-            double directToCleanScore =
-                CompareRoute(
-                    query,
-                    candidate,
-                    DirectRoute,
-                    CleanRoute
-                );
-
-            double cleanToDirectScore =
+            double cleanToDirect =
                 CompareRoute(
                     query,
                     candidate,
@@ -288,154 +280,60 @@ namespace CDRPhotoMatchPro.Imaging
                     DirectRoute
                 );
 
-            double sameRouteAverage =
-                (
-                    cleanScore +
-                    directScore
-                ) / 2.0;
-
-            double crossRouteAverage =
-                (
-                    directToCleanScore +
-                    cleanToDirectScore
-                ) / 2.0;
-
-            double bestRoute =
-                Maximum(
-                    cleanScore,
-                    directScore,
-                    directToCleanScore,
-                    cleanToDirectScore
+            double directToClean =
+                CompareRoute(
+                    query,
+                    candidate,
+                    DirectRoute,
+                    CleanRoute
                 );
 
-            double secondBestRoute =
-                SecondLargest(
-                    cleanScore,
-                    directScore,
-                    directToCleanScore,
-                    cleanToDirectScore
-                );
+            double[] routeScores =
+            {
+                cleanToClean,
+                directToDirect,
+                cleanToDirect,
+                directToClean
+            };
+
+            Array.Sort(routeScores);
+
+            double best = routeScores[3];
+            double second = routeScores[2];
+            double third = routeScores[1];
 
             /*
-             * Ek accidental route ko poori ranking dominate nahi karne dena.
-             * Best route important hai, lekin second-best agreement bhi zaroori hai.
+             * Photo aur exported vector alag visual routes me aa sakte hain.
+             * Isliye best valid route ko main importance di gayi hai.
+             * Purane matcher ki tarah 4 routes ka low average exact match ko
+             * 5-15% tak crush nahi karega.
              */
 
             double finalScore =
-                sameRouteAverage * 0.42 +
-                crossRouteAverage * 0.26 +
-                bestRoute * 0.20 +
-                secondBestRoute * 0.12;
-
-            int strongRoutes = 0;
-            int mediumRoutes = 0;
-            int weakRoutes = 0;
-
-            CountRoute(
-                cleanScore,
-                ref strongRoutes,
-                ref mediumRoutes,
-                ref weakRoutes
-            );
-
-            CountRoute(
-                directScore,
-                ref strongRoutes,
-                ref mediumRoutes,
-                ref weakRoutes
-            );
-
-            CountRoute(
-                directToCleanScore,
-                ref strongRoutes,
-                ref mediumRoutes,
-                ref weakRoutes
-            );
-
-            CountRoute(
-                cleanToDirectScore,
-                ref strongRoutes,
-                ref mediumRoutes,
-                ref weakRoutes
-            );
-
-            double routeSpread =
-                bestRoute -
-                Minimum(
-                    cleanScore,
-                    directScore,
-                    directToCleanScore,
-                    cleanToDirectScore
-                );
-
-            if (strongRoutes == 0)
-            {
-                finalScore *= 0.60;
-            }
-            else if (strongRoutes == 1)
-            {
-                finalScore *= 0.78;
-            }
-
-            if (mediumRoutes <= 1)
-            {
-                finalScore *= 0.76;
-            }
-            else if (mediumRoutes == 2)
-            {
-                finalScore *= 0.90;
-            }
-
-            if (weakRoutes >= 3)
-            {
-                finalScore *= 0.70;
-            }
-            else if (weakRoutes == 2)
-            {
-                finalScore *= 0.84;
-            }
-
-            if (routeSpread > 44)
-            {
-                finalScore *= 0.70;
-            }
-            else if (routeSpread > 32)
-            {
-                finalScore *= 0.82;
-            }
-            else if (routeSpread > 22)
-            {
-                finalScore *= 0.92;
-            }
+                best * 0.72 +
+                second * 0.20 +
+                third * 0.08;
 
             /*
-             * High score sirf multi-route agreement par.
+             * Ek accidental single route se extreme score na aaye.
+             * Lekin correct photo-vs-vector match ko unnecessary penalty bhi nahi.
              */
 
-            if (strongRoutes < 2 &&
-                finalScore > 64)
-            {
-                finalScore = 64;
-            }
+            if (best - second > 34)
+                finalScore *= 0.90;
+            else if (best - second > 24)
+                finalScore *= 0.95;
 
-            if (strongRoutes < 3 &&
-                finalScore > 78)
-            {
-                finalScore = 78;
-            }
-
-            if (strongRoutes < 4 &&
-                finalScore > 90)
-            {
-                finalScore = 90;
-            }
-
-            if (cleanScore >= 82 &&
-                directScore >= 72 &&
-                crossRouteAverage >= 68 &&
-                routeSpread <= 18)
+            if (best >= 78 &&
+                second >= 62)
             {
                 finalScore += 3.0;
+            }
+
+            if (best >= 88 &&
+                second >= 72)
+            {
+                finalScore += 2.0;
             }
 
             return Math.Round(
@@ -474,7 +372,7 @@ namespace CDRPhotoMatchPro.Imaging
                     CenterPart
                 );
 
-            double normalLeft =
+            double leftNormal =
                 ComparePart(
                     query,
                     candidate,
@@ -484,7 +382,7 @@ namespace CDRPhotoMatchPro.Imaging
                     LeftPart
                 );
 
-            double normalRight =
+            double rightNormal =
                 ComparePart(
                     query,
                     candidate,
@@ -494,7 +392,7 @@ namespace CDRPhotoMatchPro.Imaging
                     RightPart
                 );
 
-            double mirrorLeft =
+            double leftMirror =
                 ComparePart(
                     query,
                     candidate,
@@ -504,7 +402,7 @@ namespace CDRPhotoMatchPro.Imaging
                     RightPart
                 );
 
-            double mirrorRight =
+            double rightMirror =
                 ComparePart(
                     query,
                     candidate,
@@ -514,22 +412,16 @@ namespace CDRPhotoMatchPro.Imaging
                     LeftPart
                 );
 
-            double normalSideScore =
-                (
-                    normalLeft +
-                    normalRight
-                ) / 2.0;
+            double normalSide =
+                (leftNormal + rightNormal) / 2.0;
 
-            double mirrorSideScore =
-                (
-                    mirrorLeft +
-                    mirrorRight
-                ) / 2.0;
+            double mirroredSide =
+                (leftMirror + rightMirror) / 2.0;
 
             double sideScore =
                 Math.Max(
-                    normalSideScore,
-                    mirrorSideScore
+                    normalSide,
+                    mirroredSide
                 );
 
             double topScore =
@@ -552,233 +444,58 @@ namespace CDRPhotoMatchPro.Imaging
                     BottomPart
                 );
 
-            double verticalScore =
+            /*
+             * Jewellery identity ke liye FULL aur CENTER sabse important.
+             * TOP/BOTTOM connector aur lower body ko verify karte hain.
+             * Side score supportive hai, dominant nahi.
+             */
+
+            double score =
+                fullScore * 0.44 +
+                centerScore * 0.26 +
+                topScore * 0.10 +
+                bottomScore * 0.12 +
+                sideScore * 0.08;
+
+            double mainShape =
+                fullScore * 0.62 +
+                centerScore * 0.38;
+
+            double supporting =
                 (
                     topScore +
-                    bottomScore
-                ) / 2.0;
-
-            double finalScore =
-                fullScore * 0.34 +
-                centerScore * 0.32 +
-                sideScore * 0.16 +
-                verticalScore * 0.18;
-
-            int strongParts = 0;
-            int mediumParts = 0;
-            int weakParts = 0;
-
-            CountPart(
-                fullScore,
-                ref strongParts,
-                ref mediumParts,
-                ref weakParts
-            );
-
-            CountPart(
-                centerScore,
-                ref strongParts,
-                ref mediumParts,
-                ref weakParts
-            );
-
-            if (mirrorSideScore >
-                normalSideScore + 3)
-            {
-                CountPart(
-                    mirrorLeft,
-                    ref strongParts,
-                    ref mediumParts,
-                    ref weakParts
-                );
-
-                CountPart(
-                    mirrorRight,
-                    ref strongParts,
-                    ref mediumParts,
-                    ref weakParts
-                );
-            }
-            else
-            {
-                CountPart(
-                    normalLeft,
-                    ref strongParts,
-                    ref mediumParts,
-                    ref weakParts
-                );
-
-                CountPart(
-                    normalRight,
-                    ref strongParts,
-                    ref mediumParts,
-                    ref weakParts
-                );
-            }
-
-            CountPart(
-                topScore,
-                ref strongParts,
-                ref mediumParts,
-                ref weakParts
-            );
-
-            CountPart(
-                bottomScore,
-                ref strongParts,
-                ref mediumParts,
-                ref weakParts
-            );
+                    bottomScore +
+                    sideScore
+                ) / 3.0;
 
             /*
-             * Main silhouette weak ho to random ornamental design reject.
+             * Light consistency handling only.
+             * Purane repeated multiplier jungle ko hata diya gaya hai.
              */
 
-            if (fullScore < 30)
+            if (mainShape < 34)
+                score *= 0.76;
+            else if (mainShape < 46)
+                score *= 0.88;
+
+            if (supporting < 24)
+                score *= 0.90;
+
+            if (fullScore >= 76 &&
+                centerScore >= 68)
             {
-                finalScore *= 0.48;
-            }
-            else if (fullScore < 43)
-            {
-                finalScore *= 0.66;
-            }
-            else if (fullScore < 55)
-            {
-                finalScore *= 0.83;
+                score += 3.0;
             }
 
-            /*
-             * Center design identity.
-             */
-
-            if (centerScore < 30)
+            if (fullScore >= 86 &&
+                centerScore >= 78 &&
+                supporting >= 58)
             {
-                finalScore *= 0.48;
-            }
-            else if (centerScore < 43)
-            {
-                finalScore *= 0.66;
-            }
-            else if (centerScore < 56)
-            {
-                finalScore *= 0.83;
-            }
-
-            /*
-             * Sirf ek-do matching parts se high score nahi.
-             */
-
-            if (strongParts == 0)
-            {
-                finalScore *= 0.56;
-            }
-            else if (strongParts == 1)
-            {
-                finalScore *= 0.72;
-            }
-            else if (strongParts == 2)
-            {
-                finalScore *= 0.87;
-            }
-
-            if (mediumParts <= 1)
-            {
-                finalScore *= 0.66;
-            }
-            else if (mediumParts == 2)
-            {
-                finalScore *= 0.82;
-            }
-
-            if (weakParts >= 4)
-            {
-                finalScore *= 0.70;
-            }
-            else if (weakParts == 3)
-            {
-                finalScore *= 0.84;
-            }
-
-            double maximum =
-                Maximum(
-                    fullScore,
-                    centerScore,
-                    sideScore,
-                    verticalScore
-                );
-
-            double minimum =
-                Minimum(
-                    fullScore,
-                    centerScore,
-                    sideScore,
-                    verticalScore
-                );
-
-            double spread =
-                maximum -
-                minimum;
-
-            if (spread > 48)
-            {
-                finalScore *= 0.72;
-            }
-            else if (spread > 36)
-            {
-                finalScore *= 0.83;
-            }
-            else if (spread > 27)
-            {
-                finalScore *= 0.92;
-            }
-
-            if (sideScore < 25)
-            {
-                finalScore *= 0.73;
-            }
-            else if (sideScore < 38)
-            {
-                finalScore *= 0.87;
-            }
-
-            if (strongParts < 3 &&
-                finalScore > 76)
-            {
-                finalScore = 76;
-            }
-
-            if (strongParts < 4 &&
-                finalScore > 85)
-            {
-                finalScore = 85;
-            }
-
-            if (strongParts < 5 &&
-                finalScore > 92)
-            {
-                finalScore = 92;
-            }
-
-            if (fullScore >= 83 &&
-                centerScore >= 81 &&
-                sideScore >= 70 &&
-                verticalScore >= 66 &&
-                strongParts >= 4)
-            {
-                finalScore += 3;
-            }
-
-            if (fullScore >= 90 &&
-                centerScore >= 87 &&
-                sideScore >= 79 &&
-                verticalScore >= 74 &&
-                strongParts >= 5)
-            {
-                finalScore += 3;
+                score += 3.0;
             }
 
             return Clamp(
-                finalScore,
+                score,
                 0,
                 100
             );
@@ -854,109 +571,40 @@ namespace CDRPhotoMatchPro.Imaging
                     second
                 );
 
+            /*
+             * Fingerprint already silhouette, edges, projections,
+             * radial structure, aspect aur symmetry compare karta hai.
+             * Yahan dobara harsh penalties lagane se exact match crush hota tha.
+             * Sirf clearly incompatible aspect par light correction rakhi hai.
+             */
+
             double aspectDifference =
                 NormalizedDifference(
                     first.AspectRatio,
                     second.AspectRatio
                 );
 
-            double darkDifference =
-                Math.Abs(
-                    first.DarkRatio -
-                    second.DarkRatio
+            if (aspectDifference > 0.62)
+                score *= 0.82;
+            else if (aspectDifference > 0.46)
+                score *= 0.91;
+
+            double weightAgreement =
+                Math.Min(
+                    queryWeight,
+                    candidateWeight
+                ) /
+                Math.Max(
+                    0.0001,
+                    Math.Max(
+                        queryWeight,
+                        candidateWeight
+                    )
                 );
 
-            double edgeDifference =
-                Math.Abs(
-                    first.EdgeRatio -
-                    second.EdgeRatio
-                );
-
-            double borderDifference =
-                Math.Abs(
-                    first.BorderRatio -
-                    second.BorderRatio
-                );
-
-            double symmetryDifference =
-                Math.Abs(
-                    first.Symmetry -
-                    second.Symmetry
-                );
-
-            double centerDistance =
-                Distance(
-                    first.CenterX,
-                    first.CenterY,
-                    second.CenterX,
-                    second.CenterY
-                );
-
-            if (aspectDifference > 0.50)
-            {
-                score *= 0.66;
-            }
-            else if (aspectDifference > 0.35)
-            {
-                score *= 0.79;
-            }
-            else if (aspectDifference > 0.23)
-            {
-                score *= 0.90;
-            }
-
-            if (darkDifference > 0.30)
-            {
-                score *= 0.70;
-            }
-            else if (darkDifference > 0.20)
-            {
-                score *= 0.83;
-            }
-            else if (darkDifference > 0.13)
-            {
-                score *= 0.93;
-            }
-
-            if (edgeDifference > 0.23)
-            {
-                score *= 0.70;
-            }
-            else if (edgeDifference > 0.15)
-            {
-                score *= 0.84;
-            }
-            else if (edgeDifference > 0.10)
-            {
-                score *= 0.94;
-            }
-
-            if (borderDifference > 0.38)
-            {
-                score *= 0.78;
-            }
-            else if (borderDifference > 0.25)
-            {
-                score *= 0.89;
-            }
-
-            if (symmetryDifference > 0.44)
-            {
-                score *= 0.84;
-            }
-            else if (symmetryDifference > 0.30)
-            {
-                score *= 0.93;
-            }
-
-            if (centerDistance > 0.36)
-            {
-                score *= 0.78;
-            }
-            else if (centerDistance > 0.24)
-            {
-                score *= 0.89;
-            }
+            score =
+                score * 0.96 +
+                score * weightAgreement * 0.04;
 
             return Clamp(
                 score,
