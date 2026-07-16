@@ -897,6 +897,8 @@ namespace CDRPhotoMatchPro.UI
             var results =
                 new List<MatchResult>();
 
+            DesignRecord exactKnownDesign = null;
+
             byte[] query =
                 matcher.ExtractDescriptorBytes(
                     searchImagePath
@@ -910,6 +912,23 @@ namespace CDRPhotoMatchPro.UI
 
                 foreach (var design in designs)
                 {
+                    string candidateFileName =
+                        Path.GetFileName(
+                            string.IsNullOrEmpty(design.PngPath)
+                                ? design.ThumbnailPath
+                                : design.PngPath
+                        );
+
+                    if (exactKnownDesign == null &&
+                        !string.IsNullOrEmpty(candidateFileName) &&
+                        candidateFileName.IndexOf(
+                            "2_p1_corelgroup4_HD",
+                            StringComparison.OrdinalIgnoreCase
+                        ) >= 0)
+                    {
+                        exactKnownDesign = design;
+                    }
+
                     if (design.Descriptor == null ||
                         design.Descriptor.Length == 0)
                     {
@@ -1032,6 +1051,78 @@ namespace CDRPhotoMatchPro.UI
                     .ToList();
 
             grid.DataSource = top;
+
+            // ===== DEBUG VERIFY START =====
+            try
+            {
+                if (exactKnownDesign != null)
+                {
+                    string exactImagePath =
+                        string.IsNullOrEmpty(exactKnownDesign.PngPath)
+                            ? exactKnownDesign.ThumbnailPath
+                            : exactKnownDesign.PngPath;
+
+                    if (string.IsNullOrEmpty(exactImagePath) ||
+                        !File.Exists(exactImagePath))
+                    {
+                        MessageBox.Show(
+                            "Exact design database me mila, lekin image file nahi mili.\r\n\r\n" +
+                            "Path: " + exactImagePath,
+                            "Exact Design Debug"
+                        );
+                    }
+                    else
+                    {
+                        byte[] freshDescriptor =
+                            matcher.ExtractDescriptorBytes(
+                                exactImagePath
+                            );
+
+                        double storedScore =
+                            exactKnownDesign.Descriptor == null
+                                ? 0
+                                : matcher.Compare(
+                                    query,
+                                    exactKnownDesign.Descriptor
+                                );
+
+                        double freshScore =
+                            matcher.Compare(
+                                query,
+                                freshDescriptor
+                            );
+
+                        MessageBox.Show(
+                            "Exact Design Debug\r\n\r\n" +
+                            "PNG: " + exactImagePath + "\r\n\r\n" +
+                            "Stored Descriptor: " +
+                            storedScore.ToString("0.00") + "%\r\n" +
+                            "Fresh Descriptor: " +
+                            freshScore.ToString("0.00") + "%\r\n\r\n" +
+                            "Design No: " +
+                            exactKnownDesign.DesignNumber +
+                            " | Mode: " +
+                            exactKnownDesign.ExportMode,
+                            "Exact Design Debug"
+                        );
+                    }
+                }
+                else
+                {
+                    MessageBox.Show(
+                        "2_p1_corelgroup4_HD exact record loaded database me nahi mila.",
+                        "Exact Design Debug"
+                    );
+                }
+            }
+            catch (Exception debugException)
+            {
+                MessageBox.Show(
+                    debugException.ToString(),
+                    "Exact Design Debug Error"
+                );
+            }
+            // ===== DEBUG VERIFY END =====
 
             if (top.Count == 0)
             {
