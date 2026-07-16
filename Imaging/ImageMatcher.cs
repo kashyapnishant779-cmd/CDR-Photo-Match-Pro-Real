@@ -303,35 +303,29 @@ namespace CDRPhotoMatchPro.Imaging
             double third = routeScores[1];
 
             /*
-             * Photo aur exported vector alag visual routes me aa sakte hain.
-             * Isliye best valid route ko main importance di gayi hai.
-             * Purane matcher ki tarah 4 routes ka low average exact match ko
-             * 5-15% tak crush nahi karega.
+             * Ek accidental route ko 90-99% tak dominate nahi karne dena.
+             * Correct candidate me normally kam se kam 2 routes support denge.
              */
 
             double finalScore =
-                best * 0.72 +
-                second * 0.20 +
-                third * 0.08;
+                best * 0.56 +
+                second * 0.30 +
+                third * 0.14;
 
-            /*
-             * Ek accidental single route se extreme score na aaye.
-             * Lekin correct photo-vs-vector match ko unnecessary penalty bhi nahi.
-             */
+            if (best - second > 28)
+                finalScore *= 0.84;
+            else if (best - second > 18)
+                finalScore *= 0.92;
 
-            if (best - second > 34)
-                finalScore *= 0.90;
-            else if (best - second > 24)
-                finalScore *= 0.95;
-
-            if (best >= 78 &&
-                second >= 62)
+            if (best >= 80 &&
+                second >= 68)
             {
                 finalScore += 3.0;
             }
 
             if (best >= 88 &&
-                second >= 72)
+                second >= 78 &&
+                third >= 62)
             {
                 finalScore += 2.0;
             }
@@ -412,16 +406,10 @@ namespace CDRPhotoMatchPro.Imaging
                     LeftPart
                 );
 
-            double normalSide =
-                (leftNormal + rightNormal) / 2.0;
-
-            double mirroredSide =
-                (leftMirror + rightMirror) / 2.0;
-
             double sideScore =
                 Math.Max(
-                    normalSide,
-                    mirroredSide
+                    (leftNormal + rightNormal) / 2.0,
+                    (leftMirror + rightMirror) / 2.0
                 );
 
             double topScore =
@@ -444,54 +432,49 @@ namespace CDRPhotoMatchPro.Imaging
                     BottomPart
                 );
 
-            /*
-             * Jewellery identity ke liye FULL aur CENTER sabse important.
-             * TOP/BOTTOM connector aur lower body ko verify karte hain.
-             * Side score supportive hai, dominant nahi.
-             */
-
             double score =
-                fullScore * 0.44 +
-                centerScore * 0.26 +
-                topScore * 0.10 +
-                bottomScore * 0.12 +
-                sideScore * 0.08;
+                fullScore * 0.55 +
+                centerScore * 0.20 +
+                topScore * 0.08 +
+                bottomScore * 0.10 +
+                sideScore * 0.07;
 
-            double mainShape =
-                fullScore * 0.62 +
-                centerScore * 0.38;
-
-            double supporting =
+            double support =
                 (
+                    centerScore +
                     topScore +
                     bottomScore +
                     sideScore
-                ) / 3.0;
+                ) / 4.0;
 
             /*
-             * Light consistency handling only.
-             * Purane repeated multiplier jungle ko hata diya gaya hai.
+             * FULL shape weak ho to generic part matches se high score nahi.
              */
 
-            if (mainShape < 34)
-                score *= 0.76;
-            else if (mainShape < 46)
-                score *= 0.88;
-
-            if (supporting < 24)
+            if (fullScore < 36)
+                score *= 0.62;
+            else if (fullScore < 48)
+                score *= 0.78;
+            else if (fullScore < 60)
                 score *= 0.90;
 
-            if (fullScore >= 76 &&
-                centerScore >= 68)
+            if (support < 34)
+                score *= 0.82;
+            else if (support < 46)
+                score *= 0.92;
+
+            if (fullScore >= 78 &&
+                centerScore >= 68 &&
+                support >= 60)
             {
                 score += 3.0;
             }
 
-            if (fullScore >= 86 &&
+            if (fullScore >= 88 &&
                 centerScore >= 78 &&
-                supporting >= 58)
+                support >= 70)
             {
-                score += 3.0;
+                score += 2.0;
             }
 
             return Clamp(
