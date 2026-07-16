@@ -288,7 +288,7 @@ namespace CDRPhotoMatchPro.Imaging
                     CleanRoute
                 );
 
-            double[] routeScores =
+            double[] routes =
             {
                 cleanToClean,
                 directToDirect,
@@ -296,38 +296,37 @@ namespace CDRPhotoMatchPro.Imaging
                 directToClean
             };
 
-            Array.Sort(routeScores);
+            Array.Sort(routes);
 
-            double best = routeScores[3];
-            double second = routeScores[2];
-            double third = routeScores[1];
+            double best = routes[3];
+            double second = routes[2];
 
             /*
-             * Ek accidental route ko 90-99% tak dominate nahi karne dena.
-             * Correct candidate me normally kam se kam 2 routes support denge.
+             * Photo/vector pair me ek route naturally strongest ho sakta hai.
+             * Lekin top score ko second route ka support chahiye.
              */
 
             double finalScore =
-                best * 0.56 +
-                second * 0.30 +
-                third * 0.14;
+                best * 0.68 +
+                second * 0.32;
 
-            if (best - second > 28)
-                finalScore *= 0.84;
-            else if (best - second > 18)
-                finalScore *= 0.92;
+            double gap =
+                best - second;
 
-            if (best >= 80 &&
-                second >= 68)
+            if (gap > 32)
+                finalScore *= 0.82;
+            else if (gap > 22)
+                finalScore *= 0.90;
+
+            if (best >= 86 &&
+                second >= 72)
             {
                 finalScore += 3.0;
             }
-
-            if (best >= 88 &&
-                second >= 78 &&
-                third >= 62)
+            else if (best >= 78 &&
+                     second >= 64)
             {
-                finalScore += 2.0;
+                finalScore += 1.5;
             }
 
             return Math.Round(
@@ -364,6 +363,26 @@ namespace CDRPhotoMatchPro.Imaging
                     candidateRoute,
                     CenterPart,
                     CenterPart
+                );
+
+            double topScore =
+                ComparePart(
+                    query,
+                    candidate,
+                    queryRoute,
+                    candidateRoute,
+                    TopPart,
+                    TopPart
+                );
+
+            double bottomScore =
+                ComparePart(
+                    query,
+                    candidate,
+                    queryRoute,
+                    candidateRoute,
+                    BottomPart,
+                    BottomPart
                 );
 
             double leftNormal =
@@ -412,32 +431,12 @@ namespace CDRPhotoMatchPro.Imaging
                     (leftMirror + rightMirror) / 2.0
                 );
 
-            double topScore =
-                ComparePart(
-                    query,
-                    candidate,
-                    queryRoute,
-                    candidateRoute,
-                    TopPart,
-                    TopPart
-                );
-
-            double bottomScore =
-                ComparePart(
-                    query,
-                    candidate,
-                    queryRoute,
-                    candidateRoute,
-                    BottomPart,
-                    BottomPart
-                );
-
             double score =
-                fullScore * 0.55 +
-                centerScore * 0.20 +
-                topScore * 0.08 +
-                bottomScore * 0.10 +
-                sideScore * 0.07;
+                fullScore * 0.62 +
+                centerScore * 0.18 +
+                bottomScore * 0.09 +
+                topScore * 0.06 +
+                sideScore * 0.05;
 
             double support =
                 (
@@ -448,33 +447,27 @@ namespace CDRPhotoMatchPro.Imaging
                 ) / 4.0;
 
             /*
-             * FULL shape weak ho to generic part matches se high score nahi.
+             * FULL silhouette weak ho to generic flower/top/side
+             * similarities high result nahi bana sakti.
              */
 
-            if (fullScore < 36)
-                score *= 0.62;
-            else if (fullScore < 48)
-                score *= 0.78;
-            else if (fullScore < 60)
+            if (fullScore < 34)
+                score *= 0.50;
+            else if (fullScore < 46)
+                score *= 0.68;
+            else if (fullScore < 58)
+                score *= 0.84;
+
+            if (support < 30)
+                score *= 0.80;
+            else if (support < 42)
                 score *= 0.90;
 
-            if (support < 34)
-                score *= 0.82;
-            else if (support < 46)
-                score *= 0.92;
-
-            if (fullScore >= 78 &&
-                centerScore >= 68 &&
-                support >= 60)
+            if (fullScore >= 82 &&
+                centerScore >= 70 &&
+                support >= 62)
             {
                 score += 3.0;
-            }
-
-            if (fullScore >= 88 &&
-                centerScore >= 78 &&
-                support >= 70)
-            {
-                score += 2.0;
             }
 
             return Clamp(
