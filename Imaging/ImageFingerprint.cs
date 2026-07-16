@@ -168,111 +168,101 @@ namespace CDRPhotoMatchPro.Imaging
                 DifferenceSimilarity(
                     first.DarkRatio,
                     second.DarkRatio,
-                    0.28
+                    0.30
                 );
 
             double edgeRatio =
                 DifferenceSimilarity(
                     first.EdgeRatio,
                     second.EdgeRatio,
-                    0.22
+                    0.24
                 );
 
             double border =
                 DifferenceSimilarity(
                     first.BorderRatio,
                     second.BorderRatio,
-                    0.22
+                    0.24
                 );
 
             double symmetry =
                 DifferenceSimilarity(
                     first.Symmetry,
                     second.Symmetry,
-                    0.32
+                    0.36
                 );
 
             /*
-             * Main identity silhouette aur contour se aati hai.
-             * Old Hamming-only similarity unrelated dense hashes ko bhi
-             * bahut high score de rahi thi. Ab set-overlap based score use hai.
+             * Stable identity score:
+             * silhouette + edge + row/column profile dominate.
+             * Radial, aspect and density are supporting checks.
              */
 
-            double score =
-                edges * 0.28 +
-                occupancy * 0.24 +
-                horizontal * 0.13 +
-                vertical * 0.13 +
-                radial * 0.12 +
-                aspect * 0.06 +
-                dark * 0.015 +
-                edgeRatio * 0.015 +
-                border * 0.005 +
-                symmetry * 0.005;
+            double core =
+                occupancy * 0.29 +
+                edges * 0.27 +
+                horizontal * 0.15 +
+                vertical * 0.15 +
+                radial * 0.08 +
+                aspect * 0.04 +
+                dark * 0.008 +
+                edgeRatio * 0.008 +
+                border * 0.002 +
+                symmetry * 0.002;
 
-            double coreAverage =
+            double mainAverage =
                 (
-                    edges +
                     occupancy +
+                    edges +
                     horizontal +
-                    vertical +
-                    radial
-                ) / 5.0;
+                    vertical
+                ) / 4.0;
 
-            double weakestCore =
+            double weakestMain =
                 Math.Min(
-                    Math.Min(edges, occupancy),
                     Math.Min(
-                        radial,
-                        Math.Min(horizontal, vertical)
+                        occupancy,
+                        edges
+                    ),
+                    Math.Min(
+                        horizontal,
+                        vertical
                     )
                 );
 
-            int strongCore = 0;
+            if (mainAverage < 0.36)
+                core *= 0.56;
+            else if (mainAverage < 0.46)
+                core *= 0.72;
+            else if (mainAverage < 0.56)
+                core *= 0.86;
 
-            if (edges >= 0.68) strongCore++;
-            if (occupancy >= 0.68) strongCore++;
-            if (horizontal >= 0.66) strongCore++;
-            if (vertical >= 0.66) strongCore++;
-            if (radial >= 0.64) strongCore++;
+            if (weakestMain < 0.18)
+                core *= 0.70;
+            else if (weakestMain < 0.30)
+                core *= 0.84;
 
-            /*
-             * Ek-do generic similarities ke bharose 90% score nahi aayega.
-             * Multiple independent shape signals agree karne chahiye.
-             */
+            if (aspect < 0.42)
+                core *= 0.74;
+            else if (aspect < 0.60)
+                core *= 0.88;
 
-            if (coreAverage < 0.42)
-                score *= 0.58;
-            else if (coreAverage < 0.52)
-                score *= 0.76;
-            else if (coreAverage < 0.62)
-                score *= 0.90;
-
-            if (weakestCore < 0.20)
-                score *= 0.72;
-            else if (weakestCore < 0.32)
-                score *= 0.86;
-
-            if (aspect < 0.50)
-                score *= 0.78;
-            else if (aspect < 0.68)
-                score *= 0.90;
-
-            if (strongCore >= 4 &&
-                coreAverage >= 0.72)
+            if (mainAverage >= 0.78 &&
+                weakestMain >= 0.64 &&
+                radial >= 0.62)
             {
-                score += 0.055;
+                core += 0.07;
             }
-            else if (strongCore >= 3 &&
-                     coreAverage >= 0.66)
+            else if (mainAverage >= 0.68 &&
+                     weakestMain >= 0.52)
             {
-                score += 0.025;
+                core += 0.035;
             }
 
-            score = Clamp01(score);
+            core = Clamp01(core);
 
             return Math.Round(
-                score * 100.0,
+                core * 100.0,
                 2
             );
         }
