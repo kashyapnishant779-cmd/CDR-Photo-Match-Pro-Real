@@ -860,305 +860,277 @@ namespace CDRPhotoMatchPro.UI
 
             try
             {
-            if (!File.Exists(imagePath.Text))
-            {
-                MessageBox.Show(
-                    "Select a valid image."
-                );
+                if (!File.Exists(imagePath.Text))
+                {
+                    MessageBox.Show(
+                        "Select a valid image."
+                    );
 
-                return;
-            }
+                    return;
+                }
 
-            string searchImagePath =
-                PrepareSearchImage();
+                string searchImagePath =
+                    PrepareSearchImage();
 
-            bool manualCropUsed =
-                string.Equals(
-                    searchImagePath,
-                    ManualCropPath,
-                    StringComparison.OrdinalIgnoreCase
-                );
+                bool manualCropUsed =
+                    string.Equals(
+                        searchImagePath,
+                        ManualCropPath,
+                        StringComparison.OrdinalIgnoreCase
+                    );
 
-            status.Text =
-                manualCropUsed
-                    ? "Searching selected jewellery crop..."
-                    : "No manual crop. Searching original JPG fallback...";
+                status.Text =
+                    manualCropUsed
+                        ? "Stage 1/2: descriptor shortlist..."
+                        : "Stage 1/2: original image shortlist...";
 
-            grid.DataSource = null;
-            ClearPicture(resultPreview);
+                grid.DataSource = null;
+                ClearPicture(resultPreview);
+                Application.DoEvents();
 
-            Application.DoEvents();
-
-            ShowDiagnosticLineArt(
-                searchImagePath
-            );
-
-            var matcher = new ImageMatcher();
-            var results =
-                new List<MatchResult>();
-
-            DesignRecord exactKnownDesign = null;
-
-            byte[] query =
-                matcher.ExtractDescriptorBytes(
+                ShowDiagnosticLineArt(
                     searchImagePath
                 );
 
-            using (var db =
-                new Database(DbPath))
-            {
-                var designs =
-                    db.LoadDesigns();
+                var matcher = new ImageMatcher();
 
-                foreach (var design in designs)
+                byte[] queryDescriptor =
+                    matcher.ExtractDescriptorBytes(
+                        searchImagePath
+                    );
+
+                var fastCandidates =
+                    new List<Tuple<DesignRecord, double>>();
+
+                using (var db = new Database(DbPath))
                 {
-                    string candidateFileName =
-                        Path.GetFileName(
+                    var designs = db.LoadDesigns();
+
+                    foreach (var design in designs)
+                    {
+                        if (design.Descriptor == null ||
+                            design.Descriptor.Length == 0)
+                        {
+                            continue;
+                        }
+
+                        double fastScore =
+                            matcher.Compare(
+                                queryDescriptor,
+                                design.Descriptor
+                            );
+
+                        fastCandidates.Add(
+                            Tuple.Create(
+                                design,
+                                fastScore
+                            )
+                        );
+                    }
+                }
+
+                var shortlist =
+                    fastCandidates
+                        .OrderByDescending(
+                            item => item.Item2
+                        )
+                        .ThenByDescending(
+                            item => item.Item1.ShapeCount
+                        )
+                        .Take(40)
+                        .ToList();
+
+                status.Text =
+                    "Stage 2/2: actual PNG verification 0/" +
+                    shortlist.Count;
+
+                Application.DoEvents();
+
+                var results =
+                    new List<MatchResult>();
+
+                using (ImageMatcher.VerificationTemplate queryTemplate =
+                    matcher.CreateVerificationTemplate(
+                        searchImagePath
+                    ))
+                {
+                    for (int index = 0;
+                         index < shortlist.Count;
+                         index++)
+                    {
+                        DesignRecord design =
+                            shortlist[index].Item1;
+
+                        double fastScore =
+                            shortlist[index].Item2;
+
+                        string candidatePath =
                             string.IsNullOrEmpty(design.PngPath)
                                 ? design.ThumbnailPath
-                                : design.PngPath
-                        );
+                                : design.PngPath;
 
-                    if (exactKnownDesign == null &&
-                        !string.IsNullOrEmpty(candidateFileName) &&
-                        candidateFileName.IndexOf(
-                            "2_p1_corelgroup4_HD",
-                            StringComparison.OrdinalIgnoreCase
-                        ) >= 0)
-                    {
-                        exactKnownDesign = design;
-                    }
+                        double realImageScore =
+                            matcher.VerifyImage(
+                                queryTemplate,
+                                candidatePath
+                            );
 
-                    if (design.Descriptor == null ||
-                        design.Descriptor.Length == 0)
-                    {
-                        continue;
-                    }
+                        double finalScore;
 
-                    double score =
-                        matcher.Compare(
-                            query,
-                            design.Descriptor
-                        );
-
-                    string mode =
-                        design.ExportMode == null
-                            ? ""
-                            : design.ExportMode
-                                .ToUpperInvariant();
-
-                    /*
-                     * Pehle ke bade artificial bonuses hata diye.
-                     * Ranking ab matcher par depend karegi.
-                     */
-
-                    if (mode == "GROUP-HD")
-                        score += 1.5;
-
-                    if (mode == "FULL-PAGE-HD")
-                        score -= 2.0;
-
-                    if (mode == "OBJECT-HD" &&
-                        design.ShapeCount <= 1)
-                    {
-                        score -= 2.0;
-                    }
-
-                    score = Math.Max(
-                        0,
-                        Math.Min(100, score)
-                    );
-
-                    results.Add(
-                        new MatchResult
+                        if (realImageScore > 0)
                         {
-                            MatchPercent =
-                                Math.Round(score, 2),
+                            finalScore =
+                                realImageScore * 0.78 +
+                                fastScore * 0.22;
 
-                            CdrFileName =
-                                design.FileName,
-
-                            FullFolderPath =
-                                design.FolderPath,
-
-                            CdrPath =
-                                design.CdrPath,
-
-                            PageNumber =
-                                design.PageNumber,
-
-                            DesignNumber =
-                                design.DesignNumber,
-
-                            ObjectNumber =
-                                design.DesignNumber,
-
-                            ThumbnailPath =
-                                design.ThumbnailPath,
-
-                            PngPath =
-                                design.PngPath,
-
-                            ExportMode =
-                                design.ExportMode,
-
-                            ShapeCount =
-                                design.ShapeCount
+                            if (realImageScore < 30)
+                                finalScore *= 0.62;
+                            else if (realImageScore < 42)
+                                finalScore *= 0.78;
+                            else if (realImageScore >= 78 &&
+                                     fastScore >= 58)
+                                finalScore += 2.0;
                         }
-                    );
-                }
-            }
+                        else
+                        {
+                            finalScore =
+                                fastScore * 0.72;
+                        }
 
-            /*
-             * Ab har page ka sirf ek result nahi.
-             * Exact design object ko hide nahi karna.
-             */
+                        string mode =
+                            design.ExportMode == null
+                                ? ""
+                                : design.ExportMode
+                                    .ToUpperInvariant();
 
-            var top =
-                results
-                    .OrderByDescending(
-                        item =>
-                            item.MatchPercent
-                    )
-                    .ThenByDescending(
-                        item =>
-                            item.ShapeCount
-                    )
-                    .ThenBy(
-                        item =>
-                            item.CdrPath ?? "",
-                        StringComparer.OrdinalIgnoreCase
-                    )
-                    .ThenBy(
-                        item =>
-                            item.PageNumber
-                    )
-                    .ThenBy(
-                        item =>
-                            item.DesignNumber
-                    )
-                    .ThenBy(
-                        item =>
-                            item.ExportMode ?? "",
-                        StringComparer.OrdinalIgnoreCase
-                    )
-                    .ThenBy(
-                        item =>
-                            item.PngPath ?? "",
-                        StringComparer.OrdinalIgnoreCase
-                    )
-                    .Take(100)
-                    .ToList();
+                        if (mode == "COREL-GROUP-HD")
+                            finalScore += 0.75;
 
-            grid.DataSource = top;
+                        if (mode == "FULL-PAGE-HD")
+                            finalScore -= 4.0;
 
-            // ===== DEBUG VERIFY START =====
-            try
-            {
-                if (exactKnownDesign != null)
-                {
-                    string exactImagePath =
-                        string.IsNullOrEmpty(exactKnownDesign.PngPath)
-                            ? exactKnownDesign.ThumbnailPath
-                            : exactKnownDesign.PngPath;
+                        if (mode == "OBJECT-HD" &&
+                            design.ShapeCount <= 1)
+                        {
+                            finalScore -= 3.0;
+                        }
 
-                    if (string.IsNullOrEmpty(exactImagePath) ||
-                        !File.Exists(exactImagePath))
-                    {
-                        MessageBox.Show(
-                            "Exact design database me mila, lekin image file nahi mili.\r\n\r\n" +
-                            "Path: " + exactImagePath,
-                            "Exact Design Debug"
+                        finalScore = Math.Max(
+                            0,
+                            Math.Min(100, finalScore)
                         );
-                    }
-                    else
-                    {
-                        byte[] freshDescriptor =
-                            matcher.ExtractDescriptorBytes(
-                                exactImagePath
-                            );
 
-                        double storedScore =
-                            exactKnownDesign.Descriptor == null
-                                ? 0
-                                : matcher.Compare(
-                                    query,
-                                    exactKnownDesign.Descriptor
-                                );
+                        results.Add(
+                            new MatchResult
+                            {
+                                MatchPercent =
+                                    Math.Round(
+                                        finalScore,
+                                        2
+                                    ),
 
-                        double freshScore =
-                            matcher.Compare(
-                                query,
-                                freshDescriptor
-                            );
+                                CdrFileName =
+                                    design.FileName,
 
-                        MessageBox.Show(
-                            "Exact Design Debug\r\n\r\n" +
-                            "PNG: " + exactImagePath + "\r\n\r\n" +
-                            "Stored Descriptor: " +
-                            storedScore.ToString("0.00") + "%\r\n" +
-                            "Fresh Descriptor: " +
-                            freshScore.ToString("0.00") + "%\r\n\r\n" +
-                            "Design No: " +
-                            exactKnownDesign.DesignNumber +
-                            " | Mode: " +
-                            exactKnownDesign.ExportMode,
-                            "Exact Design Debug"
+                                FullFolderPath =
+                                    design.FolderPath,
+
+                                CdrPath =
+                                    design.CdrPath,
+
+                                PageNumber =
+                                    design.PageNumber,
+
+                                DesignNumber =
+                                    design.DesignNumber,
+
+                                ObjectNumber =
+                                    design.DesignNumber,
+
+                                ThumbnailPath =
+                                    design.ThumbnailPath,
+
+                                PngPath =
+                                    design.PngPath,
+
+                                ExportMode =
+                                    design.ExportMode,
+
+                                ShapeCount =
+                                    design.ShapeCount
+                            }
                         );
+
+                        status.Text =
+                            "Stage 2/2: actual PNG verification " +
+                            (index + 1) +
+                            "/" +
+                            shortlist.Count;
+
+                        if (index % 4 == 0)
+                            Application.DoEvents();
                     }
                 }
-                else
-                {
-                    MessageBox.Show(
-                        "2_p1_corelgroup4_HD exact record loaded database me nahi mila.",
-                        "Exact Design Debug"
-                    );
-                }
-            }
-            catch (Exception debugException)
-            {
-                MessageBox.Show(
-                    debugException.ToString(),
-                    "Exact Design Debug Error"
-                );
-            }
-            // ===== DEBUG VERIFY END =====
 
-            if (top.Count == 0)
-            {
+                var top =
+                    results
+                        .OrderByDescending(
+                            item => item.MatchPercent
+                        )
+                        .ThenByDescending(
+                            item => item.ShapeCount
+                        )
+                        .ThenBy(
+                            item => item.CdrPath ?? "",
+                            StringComparer.OrdinalIgnoreCase
+                        )
+                        .ThenBy(
+                            item => item.PageNumber
+                        )
+                        .ThenBy(
+                            item => item.DesignNumber
+                        )
+                        .Take(40)
+                        .ToList();
+
+                grid.DataSource = top;
+
+                if (top.Count == 0)
+                {
+                    status.Text =
+                        "NO RESULT | " +
+                        (
+                            manualCropUsed
+                                ? "Manual crop used"
+                                : "Original fallback used"
+                        );
+
+                    return;
+                }
+
                 status.Text =
-                    "NO RESULT | " +
                     (
                         manualCropUsed
-                            ? "Manual crop used"
-                            : "Original fallback used"
-                    );
+                            ? "Manual crop + real PNG verify"
+                            : "Original + real PNG verify"
+                    ) +
+                    " | Best match: " +
+                    top[0].MatchPercent +
+                    "% | " +
+                    top[0].CdrPath +
+                    " | Page " +
+                    top[0].PageNumber +
+                    " | Design " +
+                    top[0].DesignNumber +
+                    " | Mode " +
+                    top[0].ExportMode;
 
-                return;
-            }
-
-            status.Text =
-                (
-                    manualCropUsed
-                        ? "Manual crop used"
-                        : "Original fallback used"
-                ) +
-                " | Best match: " +
-                top[0].MatchPercent +
-                "% | " +
-                top[0].CdrPath +
-                " | Page " +
-                top[0].PageNumber +
-                " | Design " +
-                top[0].DesignNumber +
-                " | Mode " +
-                top[0].ExportMode;
-
-            previewTabs.SelectedIndex = 3;
+                previewTabs.SelectedIndex = 3;
             }
             catch (Exception ex)
             {
                 status.Text = "Search error";
+
                 MessageBox.Show(
                     "Search error:\r\n" +
                     ex.Message
