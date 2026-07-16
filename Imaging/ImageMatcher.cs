@@ -1588,8 +1588,8 @@ namespace CDRPhotoMatchPro.Imaging
 
         public sealed class VerificationTemplate : IDisposable
         {
-            private BinaryShape CleanShape;
-            private BinaryShape DirectShape;
+            internal BinaryShape CleanShape;
+            internal BinaryShape DirectShape;
 
             public bool IsValid
             {
@@ -1607,7 +1607,7 @@ namespace CDRPhotoMatchPro.Imaging
             }
         }
 
-        private sealed class BinaryShape
+        internal sealed class BinaryShape
         {
             public bool[,] Mask;
             public bool[,] Edge;
