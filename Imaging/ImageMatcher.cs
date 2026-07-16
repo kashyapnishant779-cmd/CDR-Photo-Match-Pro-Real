@@ -1577,6 +1577,849 @@ namespace CDRPhotoMatchPro.Imaging
             );
         }
 
+
+        /*
+         * SECOND-STAGE REAL IMAGE VERIFIER
+         *
+         * Descriptor comparison sirf shortlist banata hai.
+         * Final ranking query crop aur exported PNG ke actual normalized
+         * binary shapes ko compare karke hoti hai.
+         */
+
+        public sealed class VerificationTemplate : IDisposable
+        {
+            private BinaryShape CleanShape;
+            private BinaryShape DirectShape;
+
+            public bool IsValid
+            {
+                get
+                {
+                    return CleanShape != null ||
+                           DirectShape != null;
+                }
+            }
+
+            public void Dispose()
+            {
+                CleanShape = null;
+                DirectShape = null;
+            }
+        }
+
+        private sealed class BinaryShape
+        {
+            public bool[,] Mask;
+            public bool[,] Edge;
+            public int Size;
+            public int Foreground;
+            public double AspectRatio;
+            public double[] Rows;
+            public double[] Columns;
+        }
+
+        private const int VerificationSize = 96;
+
+        public VerificationTemplate CreateVerificationTemplate(
+            string imagePath)
+        {
+            var template = new VerificationTemplate();
+
+            if (string.IsNullOrEmpty(imagePath) ||
+                !File.Exists(imagePath))
+            {
+                return template;
+            }
+
+            ImagePreprocessResult processed = null;
+
+            try
+            {
+                using (Bitmap original = new Bitmap(imagePath))
+                {
+                    processed = ImagePreprocessor.Process(original);
+
+                    if (processed != null &&
+                        processed.LineArt != null)
+                    {
+                        template.CleanShape =
+                            BuildVerificationShape(
+                                processed.LineArt
+                            );
+                    }
+
+                    if (processed != null &&
+                        processed.CroppedOriginal != null)
+                    {
+                        template.DirectShape =
+                            BuildVerificationShape(
+                                processed.CroppedOriginal
+                            );
+                    }
+
+                    if (template.DirectShape == null)
+                    {
+                        template.DirectShape =
+                            BuildVerificationShape(
+                                original
+                            );
+                    }
+                }
+            }
+            catch
+            {
+                template.Dispose();
+            }
+            finally
+            {
+                if (processed != null)
+                    processed.Dispose();
+            }
+
+            return template;
+        }
+
+        public double VerifyImage(
+            VerificationTemplate queryTemplate,
+            string candidateImagePath)
+        {
+            if (queryTemplate == null ||
+                !queryTemplate.IsValid ||
+                string.IsNullOrEmpty(candidateImagePath) ||
+                !File.Exists(candidateImagePath))
+            {
+                return 0;
+            }
+
+            using (VerificationTemplate candidate =
+                CreateVerificationTemplate(candidateImagePath))
+            {
+                if (candidate == null ||
+                    !candidate.IsValid)
+                {
+                    return 0;
+                }
+
+                var scores = new List<double>();
+
+                AddVerificationScore(
+                    scores,
+                    queryTemplate.CleanShape,
+                    candidate.CleanShape
+                );
+
+                AddVerificationScore(
+                    scores,
+                    queryTemplate.DirectShape,
+                    candidate.DirectShape
+                );
+
+                AddVerificationScore(
+                    scores,
+                    queryTemplate.CleanShape,
+                    candidate.DirectShape
+                );
+
+                AddVerificationScore(
+                    scores,
+                    queryTemplate.DirectShape,
+                    candidate.CleanShape
+                );
+
+                if (scores.Count == 0)
+                    return 0;
+
+                scores.Sort();
+
+                double best =
+                    scores[scores.Count - 1];
+
+                double second =
+                    scores.Count >= 2
+                        ? scores[scores.Count - 2]
+                        : best;
+
+                double finalScore =
+                    best * 0.82 +
+                    second * 0.18;
+
+                if (best - second > 28)
+                    finalScore *= 0.92;
+
+                return Math.Round(
+                    Clamp(finalScore, 0, 100),
+                    2
+                );
+            }
+        }
+
+        private static void AddVerificationScore(
+            List<double> scores,
+            BinaryShape first,
+            BinaryShape second)
+        {
+            if (scores == null ||
+                first == null ||
+                second == null)
+            {
+                return;
+            }
+
+            scores.Add(
+                CompareBinaryShapes(
+                    first,
+                    second
+                )
+            );
+        }
+
+        private static BinaryShape BuildVerificationShape(
+            Bitmap source)
+        {
+            if (source == null ||
+                source.Width <= 0 ||
+                source.Height <= 0)
+            {
+                return null;
+            }
+
+            try
+            {
+                using (Bitmap square =
+                    new Bitmap(
+                        VerificationSize,
+                        VerificationSize,
+                        PixelFormat.Format24bppRgb
+                    ))
+                {
+                    using (Graphics graphics =
+                        Graphics.FromImage(square))
+                    {
+                        graphics.Clear(Color.White);
+                        graphics.InterpolationMode =
+                            InterpolationMode.HighQualityBicubic;
+                        graphics.SmoothingMode =
+                            SmoothingMode.HighQuality;
+                        graphics.PixelOffsetMode =
+                            PixelOffsetMode.HighQuality;
+
+                        int margin = 4;
+                        int available =
+                            VerificationSize - margin * 2;
+
+                        double scale = Math.Min(
+                            available /
+                            (double)Math.Max(1, source.Width),
+                            available /
+                            (double)Math.Max(1, source.Height)
+                        );
+
+                        int width = Math.Max(
+                            1,
+                            (int)Math.Round(
+                                source.Width * scale
+                            )
+                        );
+
+                        int height = Math.Max(
+                            1,
+                            (int)Math.Round(
+                                source.Height * scale
+                            )
+                        );
+
+                        int left =
+                            (VerificationSize - width) / 2;
+
+                        int top =
+                            (VerificationSize - height) / 2;
+
+                        graphics.DrawImage(
+                            source,
+                            new Rectangle(
+                                left,
+                                top,
+                                width,
+                                height
+                            ),
+                            0,
+                            0,
+                            source.Width,
+                            source.Height,
+                            GraphicsUnit.Pixel
+                        );
+                    }
+
+                    bool[,] rawMask =
+                        BuildVerificationMask(square);
+
+                    Rectangle bounds =
+                        FindVerificationBounds(rawMask);
+
+                    if (bounds.Width < 4 ||
+                        bounds.Height < 4)
+                    {
+                        return null;
+                    }
+
+                    bool[,] centered =
+                        CenterVerificationMask(
+                            rawMask,
+                            bounds
+                        );
+
+                    return CreateBinaryShape(centered);
+                }
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool[,] BuildVerificationMask(
+            Bitmap bitmap)
+        {
+            int[] histogram = new int[256];
+            long totalIntensity = 0;
+            int totalPixels =
+                bitmap.Width * bitmap.Height;
+
+            for (int y = 0; y < bitmap.Height; y++)
+            {
+                for (int x = 0; x < bitmap.Width; x++)
+                {
+                    int gray = Gray(bitmap.GetPixel(x, y));
+                    histogram[gray]++;
+                    totalIntensity += gray;
+                }
+            }
+
+            long backgroundIntensity = 0;
+            int backgroundCount = 0;
+            double bestVariance = -1;
+            int threshold = 170;
+
+            for (int value = 0; value < 256; value++)
+            {
+                backgroundCount += histogram[value];
+
+                if (backgroundCount == 0)
+                    continue;
+
+                int foregroundCount =
+                    totalPixels - backgroundCount;
+
+                if (foregroundCount == 0)
+                    break;
+
+                backgroundIntensity +=
+                    (long)value * histogram[value];
+
+                double firstMean =
+                    backgroundIntensity /
+                    (double)backgroundCount;
+
+                double secondMean =
+                    (totalIntensity - backgroundIntensity) /
+                    (double)foregroundCount;
+
+                double difference =
+                    firstMean - secondMean;
+
+                double variance =
+                    backgroundCount *
+                    (double)foregroundCount *
+                    difference * difference;
+
+                if (variance > bestVariance)
+                {
+                    bestVariance = variance;
+                    threshold = value;
+                }
+            }
+
+            threshold = ClampInt(threshold, 65, 225);
+
+            bool[,] dark =
+                new bool[VerificationSize, VerificationSize];
+
+            bool[,] light =
+                new bool[VerificationSize, VerificationSize];
+
+            int darkCount = 0;
+            int lightCount = 0;
+
+            for (int y = 0; y < VerificationSize; y++)
+            {
+                for (int x = 0; x < VerificationSize; x++)
+                {
+                    int gray = Gray(bitmap.GetPixel(x, y));
+
+                    dark[x, y] = gray <= threshold;
+                    light[x, y] = gray >= 255 - threshold;
+
+                    if (dark[x, y]) darkCount++;
+                    if (light[x, y]) lightCount++;
+                }
+            }
+
+            if (darkCount >
+                    VerificationSize *
+                    VerificationSize * 0.72 &&
+                lightCount > 25)
+            {
+                return light;
+            }
+
+            return dark;
+        }
+
+        private static Rectangle FindVerificationBounds(
+            bool[,] mask)
+        {
+            int minX = VerificationSize;
+            int minY = VerificationSize;
+            int maxX = -1;
+            int maxY = -1;
+
+            for (int y = 0; y < VerificationSize; y++)
+            {
+                for (int x = 0; x < VerificationSize; x++)
+                {
+                    if (!mask[x, y])
+                        continue;
+
+                    if (x < minX) minX = x;
+                    if (x > maxX) maxX = x;
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+                }
+            }
+
+            if (maxX < minX || maxY < minY)
+                return Rectangle.Empty;
+
+            return Rectangle.FromLTRB(
+                minX,
+                minY,
+                maxX + 1,
+                maxY + 1
+            );
+        }
+
+        private static bool[,] CenterVerificationMask(
+            bool[,] source,
+            Rectangle bounds)
+        {
+            bool[,] result =
+                new bool[VerificationSize, VerificationSize];
+
+            double scale = Math.Min(
+                (VerificationSize - 8.0) /
+                Math.Max(1, bounds.Width),
+                (VerificationSize - 8.0) /
+                Math.Max(1, bounds.Height)
+            );
+
+            int width = Math.Max(
+                1,
+                (int)Math.Round(bounds.Width * scale)
+            );
+
+            int height = Math.Max(
+                1,
+                (int)Math.Round(bounds.Height * scale)
+            );
+
+            int left =
+                (VerificationSize - width) / 2;
+
+            int top =
+                (VerificationSize - height) / 2;
+
+            for (int y = 0; y < height; y++)
+            {
+                int sourceY = ClampInt(
+                    bounds.Top +
+                    (int)(y /
+                    Math.Max(0.0001, scale)),
+                    bounds.Top,
+                    bounds.Bottom - 1
+                );
+
+                for (int x = 0; x < width; x++)
+                {
+                    int sourceX = ClampInt(
+                        bounds.Left +
+                        (int)(x /
+                        Math.Max(0.0001, scale)),
+                        bounds.Left,
+                        bounds.Right - 1
+                    );
+
+                    result[left + x, top + y] =
+                        source[sourceX, sourceY];
+                }
+            }
+
+            return result;
+        }
+
+        private static BinaryShape CreateBinaryShape(
+            bool[,] mask)
+        {
+            var shape = new BinaryShape
+            {
+                Mask = mask,
+                Edge = new bool[
+                    VerificationSize,
+                    VerificationSize
+                ],
+                Size = VerificationSize,
+                Rows = new double[VerificationSize],
+                Columns = new double[VerificationSize]
+            };
+
+            int minX = VerificationSize;
+            int minY = VerificationSize;
+            int maxX = -1;
+            int maxY = -1;
+
+            for (int y = 0; y < VerificationSize; y++)
+            {
+                for (int x = 0; x < VerificationSize; x++)
+                {
+                    if (!mask[x, y])
+                        continue;
+
+                    shape.Foreground++;
+                    shape.Rows[y]++;
+                    shape.Columns[x]++;
+
+                    if (x < minX) minX = x;
+                    if (x > maxX) maxX = x;
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+
+                    if (x == 0 ||
+                        y == 0 ||
+                        x == VerificationSize - 1 ||
+                        y == VerificationSize - 1 ||
+                        !mask[Math.Max(0, x - 1), y] ||
+                        !mask[Math.Min(
+                            VerificationSize - 1,
+                            x + 1
+                        ), y] ||
+                        !mask[x, Math.Max(0, y - 1)] ||
+                        !mask[x, Math.Min(
+                            VerificationSize - 1,
+                            y + 1
+                        )])
+                    {
+                        shape.Edge[x, y] = true;
+                    }
+                }
+            }
+
+            for (int i = 0; i < VerificationSize; i++)
+            {
+                shape.Rows[i] /= VerificationSize;
+                shape.Columns[i] /= VerificationSize;
+            }
+
+            if (maxX >= minX && maxY >= minY)
+            {
+                shape.AspectRatio =
+                    (maxX - minX + 1) /
+                    (double)Math.Max(
+                        1,
+                        maxY - minY + 1
+                    );
+            }
+
+            if (shape.Foreground < 10)
+                return null;
+
+            return shape;
+        }
+
+        private static double CompareBinaryShapes(
+            BinaryShape query,
+            BinaryShape candidate)
+        {
+            double best = 0;
+
+            int[] angles = { -6, 0, 6 };
+
+            for (int mirrorIndex = 0;
+                 mirrorIndex < 2;
+                 mirrorIndex++)
+            {
+                bool mirror = mirrorIndex == 1;
+
+                for (int angleIndex = 0;
+                     angleIndex < angles.Length;
+                     angleIndex++)
+                {
+                    BinaryShape transformed =
+                        TransformBinaryShape(
+                            candidate,
+                            angles[angleIndex],
+                            mirror
+                        );
+
+                    if (transformed == null)
+                        continue;
+
+                    for (int shiftY = -3;
+                         shiftY <= 3;
+                         shiftY += 3)
+                    {
+                        for (int shiftX = -3;
+                             shiftX <= 3;
+                             shiftX += 3)
+                        {
+                            double score =
+                                CompareBinaryAtShift(
+                                    query,
+                                    transformed,
+                                    shiftX,
+                                    shiftY
+                                );
+
+                            if (score > best)
+                                best = score;
+                        }
+                    }
+                }
+            }
+
+            return Clamp(best, 0, 100);
+        }
+
+        private static BinaryShape TransformBinaryShape(
+            BinaryShape source,
+            int angleDegrees,
+            bool mirror)
+        {
+            if (source == null || source.Mask == null)
+                return null;
+
+            bool[,] transformed =
+                new bool[VerificationSize, VerificationSize];
+
+            double angle =
+                angleDegrees * Math.PI / 180.0;
+
+            double cosine = Math.Cos(angle);
+            double sine = Math.Sin(angle);
+            double center =
+                (VerificationSize - 1) / 2.0;
+
+            for (int y = 0; y < VerificationSize; y++)
+            {
+                for (int x = 0; x < VerificationSize; x++)
+                {
+                    double targetX = x - center;
+                    double targetY = y - center;
+
+                    double sourceX =
+                        targetX * cosine +
+                        targetY * sine;
+
+                    double sourceY =
+                        -targetX * sine +
+                        targetY * cosine;
+
+                    if (mirror)
+                        sourceX = -sourceX;
+
+                    int readX =
+                        (int)Math.Round(sourceX + center);
+
+                    int readY =
+                        (int)Math.Round(sourceY + center);
+
+                    if (readX >= 0 &&
+                        readX < VerificationSize &&
+                        readY >= 0 &&
+                        readY < VerificationSize)
+                    {
+                        transformed[x, y] =
+                            source.Mask[readX, readY];
+                    }
+                }
+            }
+
+            return CreateBinaryShape(transformed);
+        }
+
+        private static double CompareBinaryAtShift(
+            BinaryShape first,
+            BinaryShape second,
+            int shiftX,
+            int shiftY)
+        {
+            int intersection = 0;
+            int union = 0;
+            int firstCount = 0;
+            int secondCount = 0;
+            int edgeIntersection = 0;
+            int firstEdgeCount = 0;
+            int secondEdgeCount = 0;
+
+            for (int y = 0; y < VerificationSize; y++)
+            {
+                int secondY = y - shiftY;
+
+                for (int x = 0; x < VerificationSize; x++)
+                {
+                    int secondX = x - shiftX;
+
+                    bool firstPixel =
+                        first.Mask[x, y];
+
+                    bool secondPixel =
+                        secondX >= 0 &&
+                        secondX < VerificationSize &&
+                        secondY >= 0 &&
+                        secondY < VerificationSize &&
+                        second.Mask[secondX, secondY];
+
+                    if (firstPixel) firstCount++;
+                    if (secondPixel) secondCount++;
+
+                    if (firstPixel && secondPixel)
+                        intersection++;
+
+                    if (firstPixel || secondPixel)
+                        union++;
+
+                    bool firstEdge =
+                        first.Edge[x, y];
+
+                    bool secondEdge =
+                        secondX >= 0 &&
+                        secondX < VerificationSize &&
+                        secondY >= 0 &&
+                        secondY < VerificationSize &&
+                        second.Edge[secondX, secondY];
+
+                    if (firstEdge) firstEdgeCount++;
+                    if (secondEdge) secondEdgeCount++;
+
+                    if (firstEdge && secondEdge)
+                        edgeIntersection++;
+                }
+            }
+
+            double dice =
+                2.0 * intersection /
+                Math.Max(1.0, firstCount + secondCount);
+
+            double iou =
+                intersection /
+                (double)Math.Max(1, union);
+
+            double edgeDice =
+                2.0 * edgeIntersection /
+                Math.Max(
+                    1.0,
+                    firstEdgeCount + secondEdgeCount
+                );
+
+            double rowSimilarity =
+                ProfileSimilarity(
+                    first.Rows,
+                    second.Rows,
+                    shiftY
+                );
+
+            double columnSimilarity =
+                ProfileSimilarity(
+                    first.Columns,
+                    second.Columns,
+                    shiftX
+                );
+
+            double profile =
+                (rowSimilarity + columnSimilarity) / 2.0;
+
+            double aspect =
+                Math.Min(
+                    first.AspectRatio,
+                    second.AspectRatio
+                ) /
+                Math.Max(
+                    0.0001,
+                    Math.Max(
+                        first.AspectRatio,
+                        second.AspectRatio
+                    )
+                );
+
+            double score =
+                dice * 0.34 +
+                iou * 0.25 +
+                edgeDice * 0.20 +
+                profile * 0.16 +
+                aspect * 0.05;
+
+            if (dice < 0.32)
+                score *= 0.68;
+            else if (dice < 0.46)
+                score *= 0.84;
+
+            if (edgeDice < 0.22)
+                score *= 0.80;
+
+            return score * 100.0;
+        }
+
+        private static double ProfileSimilarity(
+            double[] first,
+            double[] second,
+            int shift)
+        {
+            if (first == null || second == null)
+                return 0;
+
+            double difference = 0;
+            double maximum = 0;
+
+            for (int index = 0;
+                 index < VerificationSize;
+                 index++)
+            {
+                int secondIndex = index - shift;
+
+                double secondValue =
+                    secondIndex >= 0 &&
+                    secondIndex < VerificationSize
+                        ? second[secondIndex]
+                        : 0;
+
+                difference += Math.Abs(
+                    first[index] - secondValue
+                );
+
+                maximum += Math.Max(
+                    first[index],
+                    secondValue
+                );
+            }
+
+            if (maximum <= 0.000001)
+                return 1.0;
+
+            return Clamp(
+                1.0 - difference / maximum,
+                0,
+                1
+            );
+        }
+
         private static int Gray(
             Color color)
         {
