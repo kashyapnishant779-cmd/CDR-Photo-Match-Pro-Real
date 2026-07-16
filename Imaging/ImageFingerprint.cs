@@ -129,31 +129,31 @@ namespace CDRPhotoMatchPro.Imaging
             }
 
             double occupancy =
-                HashSimilarity(
+                ShapeHashSimilarity(
                     first.Hash,
                     second.Hash
                 );
 
             double edges =
-                HashSimilarity(
+                ShapeHashSimilarity(
                     first.EdgeHash,
                     second.EdgeHash
                 );
 
             double horizontal =
-                HashSimilarity(
+                ShapeHashSimilarity(
                     first.HorizontalHash,
                     second.HorizontalHash
                 );
 
             double vertical =
-                HashSimilarity(
+                ShapeHashSimilarity(
                     first.VerticalHash,
                     second.VerticalHash
                 );
 
             double radial =
-                HashSimilarity(
+                ShapeHashSimilarity(
                     first.RadialHash,
                     second.RadialHash
                 );
@@ -168,73 +168,105 @@ namespace CDRPhotoMatchPro.Imaging
                 DifferenceSimilarity(
                     first.DarkRatio,
                     second.DarkRatio,
-                    0.34
+                    0.28
                 );
 
             double edgeRatio =
                 DifferenceSimilarity(
                     first.EdgeRatio,
                     second.EdgeRatio,
-                    0.28
+                    0.22
                 );
 
             double border =
                 DifferenceSimilarity(
                     first.BorderRatio,
                     second.BorderRatio,
-                    0.30
+                    0.22
                 );
 
             double symmetry =
                 DifferenceSimilarity(
                     first.Symmetry,
                     second.Symmetry,
-                    0.42
+                    0.32
                 );
 
-            double score =
-                edges * 0.24 +
-                radial * 0.20 +
-                occupancy * 0.18 +
-                horizontal * 0.11 +
-                vertical * 0.11 +
-                aspect * 0.08 +
-                dark * 0.03 +
-                edgeRatio * 0.025 +
-                border * 0.015 +
-                symmetry * 0.01;
+            /*
+             * Main identity silhouette aur contour se aati hai.
+             * Old Hamming-only similarity unrelated dense hashes ko bhi
+             * bahut high score de rahi thi. Ab set-overlap based score use hai.
+             */
 
-            double structure =
+            double score =
+                edges * 0.28 +
+                occupancy * 0.24 +
+                horizontal * 0.13 +
+                vertical * 0.13 +
+                radial * 0.12 +
+                aspect * 0.06 +
+                dark * 0.015 +
+                edgeRatio * 0.015 +
+                border * 0.005 +
+                symmetry * 0.005;
+
+            double coreAverage =
                 (
                     edges +
-                    radial +
                     occupancy +
                     horizontal +
-                    vertical
+                    vertical +
+                    radial
                 ) / 5.0;
 
-            // Only a light rejection penalty.
-            // Correct photo-vs-vector matches ko 5–15% tak crush nahi karta.
-            if (structure < 0.35)
+            double weakestCore =
+                Math.Min(
+                    Math.Min(edges, occupancy),
+                    Math.Min(
+                        radial,
+                        Math.Min(horizontal, vertical)
+                    )
+                );
+
+            int strongCore = 0;
+
+            if (edges >= 0.68) strongCore++;
+            if (occupancy >= 0.68) strongCore++;
+            if (horizontal >= 0.66) strongCore++;
+            if (vertical >= 0.66) strongCore++;
+            if (radial >= 0.64) strongCore++;
+
+            /*
+             * Ek-do generic similarities ke bharose 90% score nahi aayega.
+             * Multiple independent shape signals agree karne chahiye.
+             */
+
+            if (coreAverage < 0.42)
+                score *= 0.58;
+            else if (coreAverage < 0.52)
+                score *= 0.76;
+            else if (coreAverage < 0.62)
+                score *= 0.90;
+
+            if (weakestCore < 0.20)
                 score *= 0.72;
-            else if (structure < 0.48)
+            else if (weakestCore < 0.32)
                 score *= 0.86;
 
-            if (aspect < 0.45)
-                score *= 0.82;
-            else if (aspect < 0.62)
-                score *= 0.92;
+            if (aspect < 0.50)
+                score *= 0.78;
+            else if (aspect < 0.68)
+                score *= 0.90;
 
-            // Strong agreement bonus.
-            if (edges >= 0.78 &&
-                radial >= 0.74 &&
-                occupancy >= 0.72)
+            if (strongCore >= 4 &&
+                coreAverage >= 0.72)
             {
-                score += 0.06;
+                score += 0.055;
             }
-            else if (structure >= 0.70)
+            else if (strongCore >= 3 &&
+                     coreAverage >= 0.66)
             {
-                score += 0.03;
+                score += 0.025;
             }
 
             score = Clamp01(score);
@@ -901,14 +933,45 @@ namespace CDRPhotoMatchPro.Imaging
                 (double)Math.Max(1, total);
         }
 
-        private static double HashSimilarity(
+        private static double ShapeHashSimilarity(
             ulong first,
             ulong second)
         {
-            int distance = Hamming(first ^ second);
+            if (first == 0 && second == 0)
+                return 1.0;
 
-            return 1.0 -
-                distance / 64.0;
+            if (first == 0 || second == 0)
+                return 0.0;
+
+            int firstCount = Hamming(first);
+            int secondCount = Hamming(second);
+            int intersection = Hamming(first & second);
+            int union = Hamming(first | second);
+            int difference = Hamming(first ^ second);
+
+            double jaccard =
+                intersection /
+                (double)Math.Max(1, union);
+
+            double dice =
+                (2.0 * intersection) /
+                Math.Max(1.0, firstCount + secondCount);
+
+            double hammingAgreement =
+                1.0 -
+                difference / 64.0;
+
+            double densityAgreement =
+                Math.Min(firstCount, secondCount) /
+                (double)Math.Max(1, Math.Max(firstCount, secondCount));
+
+            double score =
+                jaccard * 0.42 +
+                dice * 0.33 +
+                hammingAgreement * 0.15 +
+                densityAgreement * 0.10;
+
+            return Clamp01(score);
         }
 
         private static int Hamming(ulong value)
