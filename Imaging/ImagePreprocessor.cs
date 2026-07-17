@@ -107,7 +107,7 @@ namespace CDRPhotoMatchPro.Imaging
                     out confidence
                 );
 
-                lineArt = BuildLineArt(silhouette);
+                lineArt = BuildLineArt(cropped);
 
                 return new ImagePreprocessResult
                 {
@@ -505,59 +505,266 @@ namespace CDRPhotoMatchPro.Imaging
             return result;
         }
 
-        private static Bitmap BuildLineArt(Bitmap silhouette)
+        private static Bitmap BuildLineArt(Bitmap source)
         {
-            int width = silhouette.Width;
-            int height = silhouette.Height;
+            Bitmap normalized = Normalize(
+                source,
+                OutputSize
+            );
 
-            bool[,] mask = new bool[width, height];
-
-            for (int y = 0; y < height; y++)
+            try
             {
+                int width = normalized.Width;
+                int height = normalized.Height;
+
+                int[,] gray = new int[width, height];
+                int[,] smooth = new int[width, height];
+                int[,] saturation = new int[width, height];
+
+                for (int y = 0; y < height; y++)
+                {
+                    for (int x = 0; x < width; x++)
+                    {
+                        Color color = normalized.GetPixel(x, y);
+
+                        gray[x, y] = Gray(color);
+                        saturation[x, y] = Saturation(color);
+                    }
+                }
+
+                for (int y = 1; y < height - 1; y++)
+                {
+                    for (int x = 1; x < width - 1; x++)
+                    {
+                        int total =
+                            gray[x - 1, y - 1] +
+                            gray[x, y - 1] +
+                            gray[x + 1, y - 1] +
+                            gray[x - 1, y] +
+                            gray[x, y] +
+                            gray[x + 1, y] +
+                            gray[x - 1, y + 1] +
+                            gray[x, y + 1] +
+                            gray[x + 1, y + 1];
+
+                        smooth[x, y] = total / 9;
+                    }
+                }
+
                 for (int x = 0; x < width; x++)
                 {
-                    mask[x, y] =
-                        Gray(silhouette.GetPixel(x, y)) < 128;
+                    smooth[x, 0] = gray[x, 0];
+                    smooth[x, height - 1] = gray[x, height - 1];
                 }
-            }
 
-            bool[,] boundary = new bool[width, height];
-
-            for (int y = 1; y < height - 1; y++)
-            {
-                for (int x = 1; x < width - 1; x++)
+                for (int y = 0; y < height; y++)
                 {
-                    if (!mask[x, y])
-                        continue;
-
-                    bool isBoundary =
-                        !mask[x - 1, y] ||
-                        !mask[x + 1, y] ||
-                        !mask[x, y - 1] ||
-                        !mask[x, y + 1] ||
-                        !mask[x - 1, y - 1] ||
-                        !mask[x + 1, y - 1] ||
-                        !mask[x - 1, y + 1] ||
-                        !mask[x + 1, y + 1];
-
-                    if (isBoundary)
-                        boundary[x, y] = true;
+                    smooth[0, y] = gray[0, y];
+                    smooth[width - 1, y] = gray[width - 1, y];
                 }
+
+                int[,] integral = BuildIntegral(
+                    smooth,
+                    width,
+                    height
+                );
+
+                int[,] gradient = new int[width, height];
+                long gradientTotal = 0;
+                int gradientCount = 0;
+
+                for (int y = 1; y < height - 1; y++)
+                {
+                    for (int x = 1; x < width - 1; x++)
+                    {
+                        int gx =
+                            -smooth[x - 1, y - 1] +
+                             smooth[x + 1, y - 1] -
+                            2 * smooth[x - 1, y] +
+                            2 * smooth[x + 1, y] -
+                            smooth[x - 1, y + 1] +
+                            smooth[x + 1, y + 1];
+
+                        int gy =
+                            -smooth[x - 1, y - 1] -
+                            2 * smooth[x, y - 1] -
+                            smooth[x + 1, y - 1] +
+                            smooth[x - 1, y + 1] +
+                            2 * smooth[x, y + 1] +
+                            smooth[x + 1, y + 1];
+
+                        int value =
+                            Math.Abs(gx) +
+                            Math.Abs(gy);
+
+                        gradient[x, y] = value;
+                        gradientTotal += value;
+                        gradientCount++;
+                    }
+                }
+
+                int averageGradient = (int)(
+                    gradientTotal /
+                    Math.Max(1, gradientCount)
+                );
+
+                int strongEdgeLimit = ClampInt(
+                    averageGradient + 24,
+                    42,
+                    105
+                );
+
+                int weakEdgeLimit = ClampInt(
+                    averageGradient + 8,
+                    25,
+                    70
+                );
+
+                bool[,] strongEdges =
+                    new bool[width, height];
+
+                bool[,] weakEdges =
+                    new bool[width, height];
+
+                int radius = 9;
+
+                for (int y = 2; y < height - 2; y++)
+                {
+                    for (int x = 2; x < width - 2; x++)
+                    {
+                        int localMean = LocalMean(
+                            integral,
+                            width,
+                            height,
+                            x,
+                            y,
+                            radius
+                        );
+
+                        int pixelGray = smooth[x, y];
+                        int pixelSaturation =
+                            saturation[x, y];
+
+                        int edgeValue =
+                            gradient[x, y];
+
+                        bool strongGradient =
+                            edgeValue >= strongEdgeLimit;
+
+                        bool mediumGradient =
+                            edgeValue >= weakEdgeLimit;
+
+                        bool darkJewelleryDetail =
+                            pixelGray <= localMean - 17 &&
+                            pixelGray <= 205;
+
+                        bool colouredStoneOrMetal =
+                            pixelSaturation >= 35 &&
+                            pixelGray <= 225 &&
+                            edgeValue >= weakEdgeLimit - 5;
+
+                        bool highlightBoundary =
+                            pixelGray >= localMean + 20 &&
+                            edgeValue >= weakEdgeLimit;
+
+                        strongEdges[x, y] =
+                            strongGradient ||
+                            darkJewelleryDetail ||
+                            colouredStoneOrMetal;
+
+                        weakEdges[x, y] =
+                            mediumGradient ||
+                            darkJewelleryDetail ||
+                            colouredStoneOrMetal ||
+                            highlightBoundary;
+                    }
+                }
+
+                bool[,] result =
+                    new bool[width, height];
+
+                Queue<Point> queue =
+                    new Queue<Point>();
+
+                for (int y = 1; y < height - 1; y++)
+                {
+                    for (int x = 1; x < width - 1; x++)
+                    {
+                        if (!strongEdges[x, y])
+                            continue;
+
+                        result[x, y] = true;
+                        queue.Enqueue(new Point(x, y));
+                    }
+                }
+
+                int[] dx =
+                {
+                    -1, 0, 1,
+                    -1,    1,
+                    -1, 0, 1
+                };
+
+                int[] dy =
+                {
+                    -1, -1, -1,
+                     0,      0,
+                     1,  1,  1
+                };
+
+                while (queue.Count > 0)
+                {
+                    Point point =
+                        queue.Dequeue();
+
+                    for (int i = 0; i < dx.Length; i++)
+                    {
+                        int nx = point.X + dx[i];
+                        int ny = point.Y + dy[i];
+
+                        if (nx <= 0 ||
+                            nx >= width - 1 ||
+                            ny <= 0 ||
+                            ny >= height - 1)
+                        {
+                            continue;
+                        }
+
+                        if (result[nx, ny] ||
+                            !weakEdges[nx, ny])
+                        {
+                            continue;
+                        }
+
+                        result[nx, ny] = true;
+                        queue.Enqueue(new Point(nx, ny));
+                    }
+                }
+
+                ClearOuterBorder(
+                    result,
+                    width,
+                    height,
+                    10
+                );
+
+                result = Dilate(
+                    result,
+                    width,
+                    height,
+                    1
+                );
+
+                return MaskToBitmap(
+                    result,
+                    width,
+                    height
+                );
             }
-
-            // Line ko visible aur continuous banao.
-            boundary = Dilate(
-                boundary,
-                width,
-                height,
-                1
-            );
-
-            return MaskToBitmap(
-                boundary,
-                width,
-                height
-            );
+            finally
+            {
+                normalized.Dispose();
+            }
         }
 
         private static Bitmap Normalize(
@@ -990,7 +1197,7 @@ namespace CDRPhotoMatchPro.Imaging
             );
 
             Bitmap lineArt =
-                BuildLineArt(silhouette);
+                BuildLineArt(crop);
 
             return new ImagePreprocessResult
             {
