@@ -728,13 +728,13 @@ namespace CDRPhotoMatchPro.Imaging
                 graphics.Clear(Color.White);
 
                 graphics.InterpolationMode =
-                    InterpolationMode.HighQualityBicubic;
+                 InterpolationMode.NearestNeighbor;
 
                 graphics.SmoothingMode =
-                    SmoothingMode.HighQuality;
+                 SmoothingMode.None;
 
                 graphics.PixelOffsetMode =
-                    PixelOffsetMode.HighQuality;
+                 PixelOffsetMode.None;
 
                 int margin = 10;
                 int available =
